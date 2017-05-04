@@ -300,6 +300,7 @@ class Config(object):
   rnn = 'lstm' #'rnn', 'gru', 'lstm'
   use_bidir_rnn = False
   eval_mode = False
+  pretrained_input_emb_path = ''
 
   build_multitask_in_train = True
   use_constrained_softmax_in_train = True
@@ -901,7 +902,6 @@ with tf.Graph().as_default():
         model.train_epoch(sess, train)
       model_valid.eval(sess, valid, True, True, model_train=model)
       model_test.eval(sess, test, False, False, model_train=model)
-      raw_input()
 input()
 
 

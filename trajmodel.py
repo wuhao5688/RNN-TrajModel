@@ -342,7 +342,15 @@ class TrajModel(object):
     config = self.config
     with tf.variable_scope(var_scope):
       # construct embeddings
-      emb_ = tf.get_variable("embedding", [config.state_size, config.emb_dim], dtype=config.float_type)
+      if config.pretrained_input_emb_path != '': # load pretrained embeddings (such as word2vec)
+        pretrained_emb = np.loadtxt(config.pretrained_input_emb_path, delimiter=',')
+        pretrained_emb_ = tf.constant(pretrained_emb, config.float_type)
+        emb_ = tf.get_variable("embedding", dtype=config.float_type, initializer=pretrained_emb_)
+        print("init emb by pretraining.")
+        #print(pretrained_emb)
+        #raw_input()
+      else:
+        emb_ = tf.get_variable("embedding", [config.state_size, config.emb_dim], dtype=config.float_type)
       emb_inputs_ = tf.nn.embedding_lookup(emb_, input_label, name="emb_inputs")  # batch_size x time_steps x emb_dim
       if train_phase and config.keep_prob < 1:
         emb_inputs_ = tf.nn.dropout(emb_inputs_, keep_prob=config.keep_prob, name="dropout_emb_inputs")

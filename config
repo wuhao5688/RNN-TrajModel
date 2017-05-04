@@ -5,30 +5,31 @@ data_size = -1
 dataset_name = porto_6k
 loss_for_filename = loss_p
 save_ckpt = True
-load_ckpt = True
+load_ckpt = False
 max_ckpt_to_keep = 100
-compute_ppl = True
+compute_ppl = False
 direct_stdout_to_file = False
 samples_per_epoch_in_train = 500000
 use_v2_saver = False
 
 [model configuration]
 hidden_dim = 600
-emb_dim = 600
+emb_dim = 400
 num_layers = 1
 rnn = lstm
 use_bidir_rnn = False
-eval_mode = True
+eval_mode = False
+pretrained_input_emb_path = /data/porto_6k/ckpt/embeddings_400.csv
 
 build_multitask_in_train = False
-use_constrained_softmax_in_train = False
+use_constrained_softmax_in_train = True
 build_unconstrained_in_train = False
 
 build_multitask_in_test = False
-use_constrained_softmax_in_test = False
+use_constrained_softmax_in_test = True
 build_unconstrained_in_test = False
 constrained_softmax_strategy = adjmat_adjmask
-input_dest = False
+input_dest = True
 dest_emb = True
 
 [direction_method]
@@ -41,14 +42,14 @@ decoder_keep_prob = 1.0
 
 [params for training]
 batch_size = 50
-lr = 0.00001
+lr = 0.001
 lr_decay = 0.9
 keep_prob = 0.9
 max_grad_norm = 1.0
 init_scale = 0.03
 fix_seq_len = False
 use_seq_len_in_rnn = False
-max_seq_len = 200
+max_seq_len = 80
 
 [for epoch]
 epoch_count = 1000
