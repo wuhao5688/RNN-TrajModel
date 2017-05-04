@@ -84,103 +84,24 @@ def test(label):
   '''
   '''
 
+def CSSRNN_speedup(x, h):
+  adj_mat = tf.ones([config.state_size, 6], tf.int32)
+  adj_mask = tf.ones([config.state_size, 6])
+  sub_adj_mat = tf.nn.embedding_lookup(adj_mat, x) # [b*t, 6]
+  sub_adj_mask = tf.nn.embedding_lookup(adj_mask, x) # [b*t, 6]
+  W = tf.ones([config.state_size, config.hidden_dim])
+  b = tf.ones([config.state_size])
+  sub_w = tf.nn.embedding_lookup(W, sub_adj_mat) # [b*t, 6, h]
+  sub_b = tf.nn.embedding_lookup(b, sub_adj_mat) # [b*t, 6]
+  h = tf.expand_dims(h, 1) #[b*t, 1, h]
+  tiled_h = tf.tile(h, [1,6,1])
+  h_flat = tf.transpose(tf.reshape(tiled_h, [-1, int(tiled_h.get_shape()[2])])) # [h, b*t*6]
+  w_flat = tf.reshape(sub_b, [-1, int(sub_w.get_shape()[2])]) # [b*t*6, h]
+  tf.matmul(w_flat, h_flat) #[]
+  return
 
-class CSSRNN:
-  def __init__(self, config):
-    self.config = config
-    adj_mat_array = np.random.randint(0, config.state_size-1, size=[config.state_size, 6])
-    self.adj_mat = tf.constant(adj_mat_array)
-    self.adj_mask = tf.ones([config.state_size, 6])
-    self.target = tf.placeholder(tf.float32) #[b,t]
-    self.sub_target = tf.placeholder(tf.float32) #[b,t,6], one-hot
-    self.input = tf.placeholder(tf.int32, name="input") # [b,t]
-    self.w = tf.ones([config.state_size, config.hidden_dim]) #[s,h]
-    self.b = tf.ones([config.state_size]) #[b]
-
-  def feed(self):
-    config = self.config
-    input = np.random.randint(0, config.state_size-1, size=[config.batch_size, config.max_seq_len])
-    target = np.random.randint(0, config.state_size-1, size=[config.batch_size, config.max_seq_len])
-    sub_target = np.random.randint(0, 1, size=[config.batch_size, config.max_seq_len, 6])
-
-    feed_dict = {self.input.name:input, self.target.name:target, self.sub_target.name:sub_target}
-    return feed_dict
-
-  def build(self, fast):
-    h = self.build_rnn()
-    if fast:
-      loss = self.build_fast(h)
-    else:
-      loss = self.build_slow(h)
-    return loss
-
-  def run(self, loss, sess):
-    fetch_dict = {loss.name: loss}
-    feed_dict = self.feed()
-    sess.run(fetch_dict, feed_dict)
-
-  def build_rnn(self):
-    config = self.config
-    self.emb = tf.Variable(np.random.uniform(-0.05, 0.05, size=[config.state_size, config.emb_dim]), name="emb")
-    emb_input = tf.nn.embedding_lookup(self.emb, self.input) # [b, t, emb]
-    cell = tf.nn.rnn_cell.BasicLSTMCell(config.hidden_dim)
-    h, h_last = tf.nn.dynamic_rnn(cell, emb_input)
-    h = tf.reshape(h, [-1, config.hidden_dim]) # [b*t, h]
-    return h
-
-  def build_fast(self, h):
-    config = self.config
-    # h: [b*t, h]
-    target_flat = tf.reshape(self.target, [-1]) # [b*t]
-    sub_adj_mat = tf.nn.embedding_lookup(self.adj_mat, self.input) # [b*t, 6]
-    sub_adj_mask = tf.nn.embedding_lookup(self.adj_mask, self.input) # [b*t, 6]
-    target_and_sub_adj_mat = tf.concat(1, [target_flat, sub_adj_mat]) # [b*t, 7]
-    sub_w = tf.nn.embedding_lookup(self.w, sub_adj_mat) # [b*t, 7, h]
-    sub_b = tf.nn.embedding_lookup(self.b, sub_adj_mat) # [b*t, 7]
-    h = tf.expand_dims(h, 1) #[b*t, 1, h]
-    tiled_h = tf.tile(h, [1,7,1]) # [b*t, 7, h]
-    h_flat = tf.reshape(tiled_h, [-1, int(tiled_h.get_shape()[2])]) # [b*t*7, h]
-    w_flat = tf.reshape(sub_b, [-1, int(sub_w.get_shape()[2])]) # [b*t*7, h]
-    w_h = tf.reshape(tf.reduce_sum(h_flat * w_flat, 1), [-1, 7]) # [b*t, 7]
-    target_logit_and_sub_logits = w_h + sub_b # [b*t, 7]
-
-    scale = tf.reduce_max(target_logit_and_sub_logits, 1) # [b*t]
-    scaled_target_logit_and_sub_logits = tf.transpose(
-      tf.transpose(target_logit_and_sub_logits) - scale) # [b*t,7]
-
-    exp_logit = tf.exp(scaled_target_logit_and_sub_logits[:,1:]) # [b*t, 6]
-    log_fenmu = tf.log(tf.reduce_sum(exp_logit * sub_adj_mask, 1)) # [b*t]
-    log_fenzi = tf.reshape(scaled_target_logit_and_sub_logits[:, 0:1], [-1]) # [b*t]
-    loss = log_fenmu - log_fenzi
-    return loss
-
-  def build_slow(self, h):
-    config = self.config
-    onehot_target = tf.one_hot(tf.reshape(self.target, [-1]), config.state_size, dtype=tf.float32) # [b*t, s]
-    logit = tf.matmul(h, tf.transpose(self.w)) + self.b # [b*t, s]
-    scale = tf.reduce_max(logit, 1) # [b*t]
-    scaled_logit = tf.transpose(tf.transpose(logit) - scale) # [b*t, s]
-    log_fenmu = tf.log(tf.reduce_sum(tf.exp(scaled_logit), 1)) # [b*t]
-    log_fenzi = tf.reduce_sum(scaled_logit * onehot_target, 1) # [b*t]
-    loss = log_fenmu - log_fenzi
-    return loss
-
-  def benchmark(self, samples_for_benchmark):
-    config = self.config
-    steps = samples_for_benchmark // config.batch_size + 1
-    with tf.Graph().as_default():
-      loss = self.build(True)
-      init = tf.initialize_all_variables()
-      with tf.Session() as sess:
-        sess.run(init)
-        t1 = time.time()
-        for _ in range(steps):
-          self.run(loss, sess)
-        t2 = time.time()
-        samples_per_sec = steps * config.batch_size / float(t2 - t1)
-        ms_per_sample = float(t2 - t1) * 1000.0 / (steps * config.batch_size)
-    print("%d samples per sec, %.4f ms per sample, batch_size = %d" %
-          (samples_per_sec, ms_per_sample, config.batch_size))
+def CSSRNN_nospeedup():
+  return
 
 def test_angle(map, angle_granularity = 60, sigma = 5.0):
   while(True):
@@ -375,7 +296,7 @@ class Config(object):
         print("Warning, in encoder training mode, automatically set config.compute_ppl to False")
         self.compute_ppl = False
     if self.eval_mode and self.save_ckpt:
-      print("Warning, in evaluation mode, automatically set config.save_ckpt to False")
+      print("Warning, in evaluation mode, automatically set config.save_ckpt to True")
       self.save_ckpt = False
 
   def printf(self):
@@ -704,6 +625,7 @@ def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.7, 0.2, 0.1]
   test = [routes[i] for i in range(int(len(routes) * (ratio[0] + ratio[1])), len(routes))]
   return routes, train, valid, test
 
+
 # load data
 config = Config("config")
 timestr = time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime(time.time()))
@@ -727,8 +649,8 @@ route_lens = [len(route) for route in routes]
 
 print("train:%d, valid:%d, test:%d" % (len(train), len(valid), len(test)))
 print(max(route_lens))
-plt.hist(route_lens, bins=config.max_seq_len, cumulative=True, normed=True)
-plt.show()
+# plt.hist(route_lens, bins=100, cumulative=True, normed=True)
+# plt.show()
 
 def count_trans(roadnet, data):
   # initialization
@@ -899,7 +821,6 @@ with tf.Graph().as_default():
         model.train_epoch(sess, train)
       model_valid.eval(sess, valid, True, True, model_train=model)
       model_test.eval(sess, test, False, False, model_train=model)
-      raw_input()
 input()
 
 
@@ -948,4 +869,5 @@ assert result[0]["outputs"].shape == (2, 10, 64)
 # Outputs for the second example past past length 6 should be 0
 assert (result[0]["outputs"][1, 7, :] == np.zeros(cell.output_size)).all()
 """
+
 
