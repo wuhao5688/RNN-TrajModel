@@ -44,6 +44,7 @@ with tf.Session() as sess:
   print(ans)
 raw_input()
 """
+"""
 def softmax(x):
   x -= np.max(x)
   ex = np.exp(x)
@@ -83,8 +84,8 @@ def test(label):
   '''
   '''
   '''
-
-
+"""
+"""
 class CSSRNN:
   def __init__(self, config):
     self.config = config
@@ -181,6 +182,7 @@ class CSSRNN:
         ms_per_sample = float(t2 - t1) * 1000.0 / (steps * config.batch_size)
     print("%d samples per sec, %.4f ms per sample, batch_size = %d" %
           (samples_per_sec, ms_per_sample, config.batch_size))
+"""
 
 def test_angle(map, angle_granularity = 60, sigma = 5.0):
   while(True):
@@ -906,46 +908,4 @@ input()
 """
 plt.hist(route_lens, bins=100, cumulative=True, normed=True)
 plt.show()
-# class TrajModel:
-
-
-
-
-
-
-
-
-
-
-
-
-# Create input data
-X = np.random.randn(2, 10, 1)
-
-# The second example is of length 6
-# X[1, 6:] = 0
-X_lengths = [10, 6]
-print "X.shape = " + str(X.shape)
-print X
-
-cell = tf.nn.rnn_cell.LSTMCell(num_units=64, state_is_tuple=True)
-
-outputs, last_states = tf.nn.dynamic_rnn(
-  cell=cell,
-  dtype=tf.float64,
-  sequence_length=X_lengths,
-  inputs=X)
-
-result = tf.contrib.learn.run_n(
-  {"outputs": outputs, "last_states": last_states},
-  n=1,
-  feed_dict=None)
-
-print result[0]
-
-assert result[0]["outputs"].shape == (2, 10, 64)
-
-# Outputs for the second example past past length 6 should be 0
-assert (result[0]["outputs"][1, 7, :] == np.zeros(cell.output_size)).all()
 """
-
