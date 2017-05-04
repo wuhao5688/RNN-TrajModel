@@ -1,0 +1,67 @@
+[dataset configuration]
+data_size = -1
+
+[ckpt]
+dataset_name = porto_6k
+loss_for_filename = loss_p
+save_ckpt = True
+load_ckpt = True
+max_ckpt_to_keep = 100
+compute_ppl = True
+direct_stdout_to_file = False
+samples_per_epoch_in_train = 500000
+use_v2_saver = False
+
+[model configuration]
+hidden_dim = 600
+emb_dim = 600
+num_layers = 1
+rnn = lstm
+use_bidir_rnn = False
+eval_mode = True
+
+build_multitask_in_train = False
+use_constrained_softmax_in_train = False
+build_unconstrained_in_train = False
+
+build_multitask_in_test = False
+use_constrained_softmax_in_test = False
+build_unconstrained_in_test = False
+constrained_softmax_strategy = adjmat_adjmask
+input_dest = False
+dest_emb = True
+
+[direction_method]
+predict_dir = False
+encoder_decoder = end2end
+dir_sigma = 10.0
+dir_granularity = 200
+decoder_regularizer = -1
+decoder_keep_prob = 1.0
+
+[params for training]
+batch_size = 50
+lr = 0.00001
+lr_decay = 0.9
+keep_prob = 0.9
+max_grad_norm = 1.0
+init_scale = 0.03
+fix_seq_len = False
+use_seq_len_in_rnn = False
+max_seq_len = 200
+
+[for epoch]
+epoch_count = 1000
+samples_for_benchmark = 3000
+
+[for sampled softmax]
+use_sampled_softmax = False
+sample_count_for_sampled_softmax = 30000
+
+[misc]
+eval_ngram_model = False
+
+[debug]
+trace_hid_layer = False
+trace_input_id = 5925
+#6829
