@@ -731,7 +731,7 @@ route_lens = [len(route) for route in routes]
 print("train:%d, valid:%d, test:%d" % (len(train), len(valid), len(test)))
 print(max(route_lens))
 plt.hist(route_lens, bins=config.max_seq_len, cumulative=True, normed=True)
-plt.show()
+#plt.show()
 
 def count_trans(roadnet, data):
   # initialization
