@@ -690,10 +690,9 @@ class TrajModel(object):
       self.loss_dict["loss_no_topo_mask"] = loss_no_topo_mask
     return
 
-  # TODO
   def get_batch(self, data, batch_size, max_len, append_EOS=False):
     """
-    Get one mini-batch in data.
+    Get one mini-batch in data which is drawn randomly from the data.
     :param data: list of lists, one line for one sample (do not add `EOS` in `data`, this func will do it instead)
     :param batch_size: int
     :param max_len: int, samples (+EOS) longer than `max_len` will be skipped.
@@ -761,11 +760,10 @@ class TrajModel(object):
            dests=np.array(batch_dest), seq_lens=np.array(batch_seq_lens), adj_indices=np.array(batch_adj_indices),
            sub_onehot_target=batch_sub_onehot_target)
 
-  # TODO
   def get_batch_for_test(self, data, batch_size, max_len, from_id, append_EOS=False):
     """
     Get one mini-batch in data.
-    The batch is returned in the order of `data` to ensure each sample is evaluated.
+    The batch is returned according to the order in `data` to ensure each sample is evaluated.
 
     :param data: list of lists, one line for one sample (do not add `EOS` in `data`, this func will do it instead)
     :param batch_size: int
@@ -848,8 +846,12 @@ class TrajModel(object):
                  dests=np.array(batch_dest), seq_lens=np.array(batch_seq_lens), adj_indices=batch_adj_indices,
                  sub_onehot_target=batch_sub_onehot_target), pointer
 
-  # TODO
   def fetch(self, eval_op):
+    """
+    Construct the fetch dict as the input for `sess.run()`
+    :param eval_op: an operation you want to execute in `sess.run()`, e.g., `self.update_op`
+    :return: fetch_dict: a dict containing the tensors in `loss_dict`, `debug_tensors` and `trace_dict`
+    """
     fetch_dict = {}
     for k in self.loss_dict.keys():
       fetch_dict[k] = self.loss_dict[k]
@@ -864,16 +866,9 @@ class TrajModel(object):
       fetch_dict["~"+k] = self.trace_dict[k]
     return fetch_dict
 
-  # TODO
-  def fetch_encoder(self):
-    fetch_dict = {}
-    fetch_dict["encoder_outputs"] = self.encoder_outputs_
-    return fetch_dict
-
-  # TODO
   def feed(self, batch):
     """
-    feed one batch to placeholders
+    feed one batch to placeholders by constructing the feed dict
     :param batch: a Batch object
     :return: feed dict of inputs
     """
@@ -892,32 +887,37 @@ class TrajModel(object):
       input_feed[self.sub_onehot_targets_] = batch.sub_onehot_target
     return input_feed
 
-  # TODO
-  def feed_decoder(self, overall_feed_dict, encoder_outputs):
-    overall_feed_dict[self.decoder_inputs_.name] = encoder_outputs
-    return overall_feed_dict
-
-  # TODO
   def step(self, sess, batch, eval_op=None):
-    if self.config.predict_dir and self.config.encoder_decoder == 'decoder':
-      vals = self.step_pretrained_encoder_and_decoder(sess, batch, eval_op)
-    else:
-      feed_dict = self.feed(batch)
-      fetch_dict = self.fetch(eval_op)
-      # run sess
-      vals = sess.run(fetch_dict, feed_dict, options=self.config.run_options, run_metadata=self.config.run_metadata)
-      # trace time consumption
-      # very slow and requires large memory
-      if self.config.time_trace:
-        tl = timeline.Timeline(self.config.run_metadata.step_stats)
-        ctf = tl.generate_chrome_trace_format()
-        with open(self.config.trace_filename, 'w') as f:
-          f.write(ctf)
-          print("time tracing output to " + self.config.trace_filename)
+    """
+    One step for a batch
+    Either sgd training by setting `eval_op` to `self.update_op` or only evaluate the loss by leaving it to be `None`
+    :param sess: a tensorflow session
+    :param batch: a Batch object
+    :param eval_op: an operator in tensorflow
+    :return: vals: dict containing the values evaluated by `sess.run()`
+    """
+    feed_dict = self.feed(batch)
+    fetch_dict = self.fetch(eval_op)
+    # run sess
+    vals = sess.run(fetch_dict, feed_dict, options=self.config.run_options, run_metadata=self.config.run_metadata)
+    # trace time consumption
+    # very slow and requires large memory
+    if self.config.time_trace:
+      tl = timeline.Timeline(self.config.run_metadata.step_stats)
+      ctf = tl.generate_chrome_trace_format()
+      with open(self.config.trace_filename, 'w') as f:
+        f.write(ctf)
+        print("time tracing output to " + self.config.trace_filename)
     return vals
 
   # TODO
   def speed_benchmark(self, sess, samples_for_test=500):
+    """
+
+    :param sess:
+    :param samples_for_test: how many samples you want the benchmark to test
+    :return:
+    """
     data = self.data
     steps_for_test = samples_for_test // self.config.batch_size + 1
     loss = 0.0

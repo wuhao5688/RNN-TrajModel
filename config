@@ -14,12 +14,14 @@ use_v2_saver = False
 
 [model configuration]
 hidden_dim = 50
+lpi_dim = 200
 emb_dim = 400
 num_layers = 1
 rnn = lstm
 use_bidir_rnn = False
 eval_mode = False
 # pretrained_input_emb_path = /data/porto_6k/ckpt/embeddings_400.csv
+model_type = CSSRNN
 
 build_multitask_in_train = False
 use_constrained_softmax_in_train = False
