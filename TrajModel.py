@@ -275,8 +275,8 @@ class TrajModel(object):
                                          dtype=config.float_type) # [state, max_adj_num, batch*t]
       self.all_b_task_ = tf.get_variable("all_b_task", [config.state_size, self.adj_mat_.get_shape()[1]]) # [state, max_adj_num]
       # dropout
-      if train_phase and config.keep_prob < 1:
-        all_w_task_ = tf.nn.dropout(self.all_w_task_, keep_prob=config.keep_prob, name="dropout_all_w_task")
+      if train_phase and config.individual_task_keep_prob < 1:
+        all_w_task_ = tf.nn.dropout(self.all_w_task_, keep_prob=config.individual_task_keep_prob, name="dropout_all_w_task")
       else:
         all_w_task_ = self.all_w_task_
 
@@ -346,11 +346,11 @@ class TrajModel(object):
                                              [-1, int(self.sub_onehot_targets_.get_shape()[2])]),
                                   use_onehot=True)
       loss_p_ = tf.reduce_sum(xent_) / config.batch_size
-      if config.decoder_regularizer > 0 and train_phase:
-        if config.decoder_keep_prob < 1.0:
+      if config.individual_task_regularizer > 0 and train_phase:
+        if config.individual_task_keep_prob < 1.0:
           print("Warning: you'd better only choose one between dropout and L2-regularizer")
-        print("Use L2 regularizer on w in decoder")
-        loss_ = loss_p_ + config.decoder_regularizer * tf.nn.l2_loss(all_w_task_)
+        print("Use L2 regularizer on w in individual task layer")
+        loss_ = loss_p_ + config.individual_task_regularizer * tf.nn.l2_loss(all_w_task_)
       else:
         loss_ = loss_p_
       return loss_, loss_p_
@@ -911,7 +911,7 @@ class TrajModel(object):
         print("time tracing output to " + self.config.trace_filename)
     return vals
 
-  def speed_benchmark(self, sess, samples_for_test=500):
+  def speed_benchmark(self, sess, samples_for_test=1000):
     """
     Train some samples for testing the speed.
     if `self.debug_tensors` is not empty, its the time for outputting these debug tensors.
