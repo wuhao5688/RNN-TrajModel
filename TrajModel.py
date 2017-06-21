@@ -32,7 +32,6 @@ class Batch(object):
 
 
 class TrajModel(object):
-  # TODO
   def __init__(self, train_phase, config, data, model_scope = None, map = None, mapInfo = None):
     """
     :param train_phase: bool, indicate whether the instance of the model is in train phase or valid/test phase
@@ -863,6 +862,8 @@ class TrajModel(object):
     for k in self.trace_dict.keys():
       # use '~' in the front of the name to identify the tensors not to be included in the `print` time
       # and to identify these tensors need to be traced.
+      # for example, in this code, we want to trace the latent prediction information w.r.t. a given state id
+      # which has already been added in `build_LPIRNN_model()`
       fetch_dict["~"+k] = self.trace_dict[k]
     return fetch_dict
 
@@ -910,13 +911,13 @@ class TrajModel(object):
         print("time tracing output to " + self.config.trace_filename)
     return vals
 
-  # TODO
   def speed_benchmark(self, sess, samples_for_test=500):
     """
-
-    :param sess:
-    :param samples_for_test: how many samples you want the benchmark to test
-    :return:
+    Train some samples for testing the speed.
+    if `self.debug_tensors` is not empty, its the time for outputting these debug tensors.
+    Free to modify anything in the block of `if len(self.debug_tensors) > 0:` for debugging intermediate tensors.
+    :param sess: tensorflow session
+    :param samples_for_test: how many samples you want the benchmarker to test
     """
     data = self.data
     steps_for_test = samples_for_test // self.config.batch_size + 1
@@ -929,56 +930,57 @@ class TrajModel(object):
       else:
         eval_op = None
       loss_dict = self.step(sess, batch, eval_op)  # average by batch
-      loss += loss_dict[self.config.loss_for_filename]
+      loss += loss_dict[self.config.loss_for_filename] # specify the loss by what you really care
 
-      def plot_dir():
-        map = self.map
-        e_dir = loss_dict["_e_dir_distri"]
-        t_dir = loss_dict["_t_dir_distri"]
-        targets = batch.targets.flatten()
-        buckets = np.linspace(0.0, 360.0, self.config.dir_granularity + 1)[0:-1]
-        for i in range(e_dir.shape[0]): # batch*t
-          def get_adj_distri(edge_id):
-            edge = map.edges[edge_id]
-            print("pick up edge " + str(edge.id))
-            def calc_deg(p1, p2):
-              cos_val = (p2[0] - p1[0]) / math.sqrt(
-                (p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[1] - p1[1]) * (p2[1] - p1[1]))
-              rad = math.acos(cos_val)
-              if p2[1] < p1[1]:  # [pi, 2pi]
-                rad = 2 * math.pi - rad
-              return rad / math.pi * 180.0
-            adj_dists = []
-            for adj_edge in edge.adjList:
-              p1 = map.nodes[adj_edge.startNodeId]
-              p2 = map.nodes[adj_edge.endNodeId]
-              deg = calc_deg(p1, p2)
-              print("adj_edge %d deg = %.3f" % (adj_edge.id, deg))
-              probs = []
-              for bucket_deg in np.linspace(0.0, 360.0, self.config.dir_granularity + 1)[0:-1]:
-                if abs(bucket_deg - deg) < 360.0 - abs(bucket_deg - deg):
-                  delta = abs(bucket_deg - deg)
-                else:
-                  delta = 360.0 - abs(bucket_deg - deg)
-                probs.append(math.exp(-delta * delta / (2 * self.config.dir_sigma * self.config.dir_sigma)))
-              # normalization
-              summation = sum(probs)
-              for i in range(len(probs)):
-                probs[i] /= summation
-              adj_dists.append(probs)
-            return adj_dists
-          adj_distri = get_adj_distri(targets[i])
-          for distri in adj_distri:
-            plt.plot(buckets, distri, 'g-')
-          plt.plot(buckets, e_dir[i], 'b-')
-          plt.plot(buckets, t_dir[i], 'r-')
-          plt.title(str(targets[i]))
-          plt.show()
+      # def plot_dir():
+      #   map = self.map
+      #   e_dir = loss_dict["_e_dir_distri"]
+      #   t_dir = loss_dict["_t_dir_distri"]
+      #   targets = batch.targets.flatten()
+      #   buckets = np.linspace(0.0, 360.0, self.config.dir_granularity + 1)[0:-1]
+      #   for i in range(e_dir.shape[0]): # batch*t
+      #     def get_adj_distri(edge_id):
+      #       edge = map.edges[edge_id]
+      #       print("pick up edge " + str(edge.id))
+      #       def calc_deg(p1, p2):
+      #         cos_val = (p2[0] - p1[0]) / math.sqrt(
+      #           (p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[1] - p1[1]) * (p2[1] - p1[1]))
+      #         rad = math.acos(cos_val)
+      #         if p2[1] < p1[1]:  # [pi, 2pi]
+      #           rad = 2 * math.pi - rad
+      #         return rad / math.pi * 180.0
+      #       adj_dists = []
+      #       for adj_edge in edge.adjList:
+      #         p1 = map.nodes[adj_edge.startNodeId]
+      #         p2 = map.nodes[adj_edge.endNodeId]
+      #         deg = calc_deg(p1, p2)
+      #         print("adj_edge %d deg = %.3f" % (adj_edge.id, deg))
+      #         probs = []
+      #         for bucket_deg in np.linspace(0.0, 360.0, self.config.dir_granularity + 1)[0:-1]:
+      #           if abs(bucket_deg - deg) < 360.0 - abs(bucket_deg - deg):
+      #             delta = abs(bucket_deg - deg)
+      #           else:
+      #             delta = 360.0 - abs(bucket_deg - deg)
+      #           probs.append(math.exp(-delta * delta / (2 * self.config.dir_sigma * self.config.dir_sigma)))
+      #         # normalization
+      #         summation = sum(probs)
+      #         for i in range(len(probs)):
+      #           probs[i] /= summation
+      #         adj_dists.append(probs)
+      #       return adj_dists
+      #     adj_distri = get_adj_distri(targets[i])
+      #     for distri in adj_distri:
+      #       plt.plot(buckets, distri, 'g-')
+      #     plt.plot(buckets, e_dir[i], 'b-')
+      #     plt.plot(buckets, t_dir[i], 'r-')
+      #     plt.title(str(targets[i]))
+      #     plt.show()
       # plot_dir()
 
+      # output debug tensors
       if len(self.debug_tensors) > 0:
         print("[Debug mode]")
-
+        # personal codes, here is just an example
         t = loss_dict["_log_probs"].shape[0]
         for i in range(t):
           if (loss_dict["_seq_mask"][i] == 0.0):
@@ -1004,7 +1006,6 @@ class TrajModel(object):
     samples_per_sec, ms_per_sample, self.config.batch_size))
     print("benchmark loss = %.5f" % (loss / steps_for_test))
 
-  # TODO
   def train_epoch(self, sess, data):
     config = self.config
     cumulative_losses = {}
@@ -1026,7 +1027,7 @@ class TrajModel(object):
         else:
           cumulative_losses[k] += fetch_vals[k]
 
-      # collect trace information
+      # collect trace information (here we are collecting the latent prediction information w.r.t state `config.trace_input_id`)
       for k in self.trace_dict.keys():
         if self.trace_items.get(k) is None:
           # self.trace_items[k] = {}
@@ -1047,7 +1048,7 @@ class TrajModel(object):
             self.trace_items[k][target].append(hid_layer_val)
             """
 
-      # reach every 10%
+      # if it reaches every 10% of training data
       # print losses and reinitialize counters and losses
       if general_step_count % (steps_per_epoch_in_train // 10) == 0:
         print("\t%d%%:" % (general_step_count // (steps_per_epoch_in_train // 10) * 10), end='')
@@ -1069,16 +1070,28 @@ class TrajModel(object):
           sys.stdout = self.config.log_file
     print("")
 
-  # TODO
   def dump_trace_item(self):
+    # dump LPI
     config = self.config
     for k in self.trace_items.keys():
       np.savetxt(os.path.join(config.save_path, 'label_' + k), self.trace_items[k][0], '%d')
       np.savetxt(os.path.join(config.save_path, 'feature_' + k), self.trace_items[k][1])
       print("trace items have been output to " + config.save_path)
 
-  # TODO
   def eval(self, sess, data, is_valid_set, save_ckpt, model_train = None):
+    """
+    evaluate all samples in `data`
+    :param sess: tensorflow session
+    :param data: data for evaluation
+    :param is_valid_set: bool, `True` if `data` is the validation set, `False` for the test set
+    :param save_ckpt: bool
+    :param model_train: TrajModel object (which is for training process), to save the parameters after evaluation
+    :return:
+    """
+    if self.train_phase:
+      raise Exception("Evaluation should not be invoked when training (i.e., `self.train_phase` is `True`)")
+    if save_ckpt and model_train is None:
+      raise Exception("You should not leave `model_train` as `None` if you want to save the checkpoint")
     cumulative_losses = {}
     batch_counter = 0
     from_id = 0
@@ -1119,19 +1132,20 @@ class TrajModel(object):
       if not os.path.exists(self.config.save_path):
         os.makedirs(self.config.save_path)
 
-      # save encoder forward part only (for decoder inputs)
-      if self.config.predict_dir and self.config.encoder_decoder == 'encoder':
-        forward_ckpt_path = os.path.join(self.config.encoder_save_path_forward_part, filename)
-        if not os.path.exists(self.config.encoder_save_path_forward_part):
-          os.makedirs(self.config.encoder_save_path_forward_part)
-        print("saving forward params to: " + forward_ckpt_path)
-        model_train.encoder_forward_saver.save(sess, forward_ckpt_path)  # params should be saved by model_train
+      # # save encoder forward part only (for decoder inputs)
+      # if self.config.predict_dir and self.config.encoder_decoder == 'encoder':
+      #   forward_ckpt_path = os.path.join(self.config.encoder_save_path_forward_part, filename)
+      #   if not os.path.exists(self.config.encoder_save_path_forward_part):
+      #     os.makedirs(self.config.encoder_save_path_forward_part)
+      #   print("saving forward params to: " + forward_ckpt_path)
+      #   model_train.encoder_forward_saver.save(sess, forward_ckpt_path)  # params should be saved by model_train
 
       # save training ckpt file
       ckpt_path = os.path.join(self.config.save_path, filename)
       print("saving training ckpt to: " + ckpt_path)
-      model_train.saver.save(sess,
-                             ckpt_path)  # params should be saved by model_train as model_test do not have params of RMSProp
+      # params should be saved by `model_train` as model_test (i.e., `self`) do not contain intermediate params of
+      # some optimizers such as RMSProp
+      model_train.saver.save(sess, ckpt_path)
       print("done")
 
       # flush IO buffer
