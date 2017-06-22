@@ -170,18 +170,6 @@ class TrajModel(object):
     clipped_grads, norm = tf.clip_by_global_norm(grads, config.max_grad_norm)
     self.update_op = opt.apply_gradients(zip(clipped_grads, params_to_train))
 
-  # # TODO
-  # def step_pretrained_encoder_and_decoder(self, sess, batch, eval_op=None):
-  #   overall_feed_dict = self.feed(batch)
-  #   encoder_fetch_dict = self.fetch_encoder()
-  #   # run sess
-  #   encoder_vals = sess.run(encoder_fetch_dict, overall_feed_dict)
-  #   decoder_feed_dict = self.feed_decoder(overall_feed_dict, encoder_vals["encoder_outputs"])
-  #   decoder_fetch_dict = self.fetch(eval_op)
-  #   vals = sess.run(decoder_fetch_dict, decoder_feed_dict)
-  #   return vals
-
-  # TODO
   def build_sharedTask_layer(self, train_phase, var_scope="shared_task"):
     """
     Build input->RNN->FC_layer->latent prediction information.
@@ -191,8 +179,6 @@ class TrajModel(object):
     """
     config = self.config
     with tf.variable_scope(var_scope):
-      # self.deg_buckets = tf.constant(np.linspace(0.0, 360.0, config.dir_granularity + 1, dtype=np.float32)[0:-1],
-      #                                dtype=config.float_type)
       # construct embeddings
       emb_inputs_ = self.build_input(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
 
@@ -200,63 +186,12 @@ class TrajModel(object):
       rnn_outputs_ = self.build_rnn(emb_inputs_, train_phase)  # [batch, time, hid_dim]
       outputs_flat_ = tf.reshape(rnn_outputs_, [-1, int(rnn_outputs_.get_shape()[2])])  # [batch*t, hid_dim]
 
-      # # construct targets
-      # dir_distris_ = tf.constant(dir_distris, dtype=config.float_type, name="dir_distris")
-      # dir_targets_ = tf.nn.embedding_lookup(dir_distris_, self.targets_)
-      # targets_flat_ = tf.reshape(dir_targets_, [-1, int(dir_targets_.get_shape()[2])])  # [batch*t, dir]
-
       # hidden to output
-      # w_dir_ = tf.get_variable("wdir", [config.hidden_dim, config.dir_granularity], dtype=config.float_type)
       w_fc_ = tf.get_variable("w_fc", [int(outputs_flat_.get_shape()[1]), config.lpi_dim],
                                dtype=config.float_type)  # [hid_dim, lpi_dim]
       b_fc_ = tf.get_variable("b_fc", [config.lpi_dim], dtype=config.float_type)  # [lpi_dim]
       lpi_ = tf.matmul(outputs_flat_, w_fc_) + b_fc_  # [batch*t, lpi_dim]
-      # softmax_ = tf.nn.softmax(logits_)  # [batch*t, dir]
-
-      # fwd_params = [v for v in tf.all_variables() if v.name.startswith(self.model_scope + "/" + var_scope)]  # TODO
-      # if config.use_v2_saver:
-      #   self.encoder_forward_saver = tf.train.Saver(fwd_params, max_to_keep=config.max_ckpt_to_keep,
-      #                                               write_version=saver_pb2.SaverDef.V2)
-      # else:
-      #   self.encoder_forward_saver = tf.train.Saver(fwd_params, max_to_keep=config.max_ckpt_to_keep,
-      #                                               write_version=saver_pb2.SaverDef.V1)
       return lpi_
-      # # compute loss
-      # mask_flat_ = tf.reshape(self.mask_, [-1])  # [batch*t]
-      # loss_vec_ = tf.mul(tf.nn.softmax_cross_entropy_with_logits(logits_, targets_flat_), mask_flat_)  # [batch*t]
-      # loss_ = tf.reduce_sum(loss_vec_) / config.batch_size
-      # expec_dir_ = tf.reduce_sum(tf.mul(softmax_, self.deg_buckets), 1)  # [batch*t]
-      # true_dir_ = tf.reduce_sum(tf.mul(targets_flat_, self.deg_buckets), 1)  # [batch*t]
-      # err_dir_vec = tf.abs(tf.mul(expec_dir_ - true_dir_, mask_flat_))
-      # err_dir_ = tf.reduce_sum(err_dir_vec) / tf.reduce_sum(tf.cast(self.seq_len_, config.float_type))
-        # return softmax_, err_dir_
-
-        # return tf.nn.relu(logits_), err_dir_ # return logits_ will be better than normalized logits_ (softmax_)
-        # return outputs_flat_, err_dir_
-
-      # self.loss_dict = {}
-      # self.loss_dict["loss"] = loss_
-      # self.loss_dict["err_dir"] = err_dir_
-      #
-      # # self.debug_tensors["e_dir"] = tf.reshape(expec_dir_, [config.batch_size, -1])[0]
-      # # self.debug_tensors["t_dir"] = tf.reshape(true_dir_, [config.batch_size, -1])[0]
-      # # self.debug_tensors["e_dir_distri"] = tf.nn.softmax(logits_) # [batch*t, dir]
-      # # self.debug_tensors["t_dir_distri"] = targets_flat_  # [batch*t, dir]
-      # # self.debug_tensors["seq_mask"] = self.mask_[0]
-      # if train_phase:
-      #   params = [v for v in tf.all_variables()
-      #             if v.name.startswith(self.model_scope + "/" + var_scope)
-      #             or v.name.startswith("Train/" + self.model_scope + "/" + var_scope)]  # TODO
-      #   self.build_trainer(self.loss_dict["loss"], params)
-      #   params = [v for v in tf.all_variables()
-      #             if v.name.startswith(self.model_scope + "/" + var_scope)
-      #             or v.name.startswith("Train/" + self.model_scope + "/" + var_scope)]  # TODO
-      #   if config.use_v2_saver:
-      #     self.saver = tf.train.Saver(params, max_to_keep=config.max_ckpt_to_keep,
-      #                                 write_version=saver_pb2.SaverDef.V2)
-      #   else:
-      #     self.saver = tf.train.Saver(params, max_to_keep=config.max_ckpt_to_keep,
-      #                                 write_version=saver_pb2.SaverDef.V1)
 
   def build_individualTask_layer(self, train_phase, lpi_, var_scope="individual_task"):
     """
@@ -268,7 +203,6 @@ class TrajModel(object):
              loss_p_: 1-D tensor, the x-ent averaged by `batch_size`
     """
     config = self.config
-    #self.decoder_inputs_ = lpi_inputs_
     with tf.variable_scope(var_scope):
       self.all_w_task_ = tf.get_variable("all_w_task", [config.state_size, self.adj_mat_.get_shape()[1],
                                                         lpi_.get_shape()[1]],
@@ -354,28 +288,11 @@ class TrajModel(object):
       else:
         loss_ = loss_p_
       return loss_, loss_p_
-      # self.loss_dict["loss"] = loss_
-      # self.loss_dict["loss_p"] = loss_p_
-      # #
-      # # build saver and trainer
-      # params = [v for v in tf.all_variables() if v.name.startswith(self.model_scope + "/" + var_scope)]  # TODO
-      #
-      # if train_phase:
-      #   self.build_trainer(self.loss_dict["loss"], params)
-      #   params = [v for v in tf.all_variables()
-      #             if v.name.startswith(self.model_scope + "/" + var_scope)
-      #             or v.name.startswith("Train/" + self.model_scope + "/" + var_scope)]  # TODO
-      #   if config.use_v2_saver:
-      #     self.saver = tf.train.Saver(params, max_to_keep=config.max_ckpt_to_keep,
-      #                                 write_version=saver_pb2.SaverDef.V2)
-      #   else:
-      #     self.saver = tf.train.Saver(params, max_to_keep=config.max_ckpt_to_keep,
-      #                                 write_version=saver_pb2.SaverDef.V1)
 
   def build_LPIRNN_model(self, train_phase):
     config = self.config
     self.lpi_ = self.build_sharedTask_layer(train_phase)
-    loss_, loss_p_ = self.build_decoder(train_phase, self.lpi_)
+    loss_, loss_p_ = self.build_individualTask_layer(train_phase, self.lpi_)
     if config.trace_hid_layer:
       self.trace_dict["lpi_"+str(config.trace_input_id)] = self.lpi_ # here you can collect the lpi w.r.t. a given state id
     self.loss_dict["loss"] = loss_
@@ -388,37 +305,6 @@ class TrajModel(object):
     else:
       self.saver = tf.train.Saver(tf.all_variables(), max_to_keep=config.max_ckpt_to_keep,
                                   write_version=saver_pb2.SaverDef.V1)
-
-  #
-  # def build_CSSRNN_model(self, train_phase, var_scope = "CSSRNN"):
-  #   config = self.config
-  #   # construct embeddings
-  #   emb_inputs_ = self.build_input(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
-  #
-  #   # construct rnn
-  #   rnn_outputs_ = self.build_rnn(emb_inputs_, train_phase)  # [batch, time, hid_dim]
-  #   outputs_flat_ = tf.reshape(rnn_outputs_, [-1, int(rnn_outputs_.get_shape()[2])])  # [batch*t, hid_dim]
-  #
-  #   # construct output losses
-  #   if train_phase:
-  #     self.build_rnn_to_xent_loss(outputs_flat_, config.build_multitask_in_train,
-  #                                 config.use_constrained_softmax_in_train,
-  #                                 config.constrained_softmax_strategy,
-  #                                 config.build_unconstrained_in_train)
-  #   else:
-  #     self.build_rnn_to_xent_loss(outputs_flat_, config.build_multitask_in_test,
-  #                                 config.use_constrained_softmax_in_test,
-  #                                 config.constrained_softmax_strategy,
-  #                                 config.build_unconstrained_in_test)
-  #
-  #   # compute grads and update params
-  #   self.build_trainer(self.loss_dict["loss"], tf.trainable_variables())
-  #   if config.use_v2_saver:
-  #     self.saver = tf.train.Saver(tf.all_variables(), max_to_keep=config.max_ckpt_to_keep,
-  #                                 write_version=saver_pb2.SaverDef.V2)
-  #   else:
-  #     self.saver = tf.train.Saver(tf.all_variables(), max_to_keep=config.max_ckpt_to_keep,
-  #                                 write_version=saver_pb2.SaverDef.V1)
 
   def build_RNNLM_model(self, train_phase):
     """
@@ -1131,14 +1017,6 @@ class TrajModel(object):
         filename += ppl_str
       if not os.path.exists(self.config.save_path):
         os.makedirs(self.config.save_path)
-
-      # # save encoder forward part only (for decoder inputs)
-      # if self.config.predict_dir and self.config.encoder_decoder == 'encoder':
-      #   forward_ckpt_path = os.path.join(self.config.encoder_save_path_forward_part, filename)
-      #   if not os.path.exists(self.config.encoder_save_path_forward_part):
-      #     os.makedirs(self.config.encoder_save_path_forward_part)
-      #   print("saving forward params to: " + forward_ckpt_path)
-      #   model_train.encoder_forward_saver.save(sess, forward_ckpt_path)  # params should be saved by model_train
 
       # save training ckpt file
       ckpt_path = os.path.join(self.config.save_path, filename)
