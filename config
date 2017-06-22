@@ -2,11 +2,11 @@
 dataset_name = porto_6k
 workspace = /data
 file_name = data/cleaned_mm_edges.txt
-data_size = -1 # use all data
+data_size = -1
 
 [ckpt]
 save_ckpt = True
-load_ckpt = False
+load_ckpt = True
 max_ckpt_to_keep = 100
 compute_ppl = False
 direct_stdout_to_file = False
@@ -15,7 +15,7 @@ use_v2_saver = False
 
 [model configuration]
 hidden_dim = 50
-emb_dim = 400
+emb_dim = 50
 num_layers = 1
 rnn = lstm
 use_bidir_rnn = False
@@ -26,13 +26,13 @@ input_dest = True
 dest_emb = True
 
 [LPIRNN]
-lpi_dim = 200
+lpi_dim = 50
 individual_task_regularizer = -1
 individual_task_keep_prob = 0.9
 
 [params for training]
 batch_size = 128
-lr = 0.001
+lr = 0.0001
 lr_decay = 0.9
 keep_prob = 0.9
 max_grad_norm = 1.0
@@ -43,10 +43,6 @@ opt = rmsprop
 [for epoch]
 epoch_count = 1000
 samples_for_benchmark = 3000
-
-[for sampled softmax]
-use_sampled_softmax = False
-sample_count_for_sampled_softmax = 30000
 
 [misc]
 eval_ngram_model = False
