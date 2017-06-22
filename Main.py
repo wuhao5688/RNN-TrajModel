@@ -450,19 +450,16 @@ def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.8, 0.1, 0.1]
 config = Config("config")
 timestr = time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime(time.time()))
 if config.direct_stdout_to_file:
-  if config.predict_dir:
-    model_str = config.encoder_decoder
-  else:
-    model_str = "normal"
+  model_str = config.model_type
   config.log_filename = "log_" + timestr + "_" + config.dataset_name + "_" + model_str + ".txt"
   config.log_file = open(config.log_filename, 'w')
   sys.stdout = config.log_file
 
 
 routes, train, valid, test = read_data(config.dataset_path, config.data_size, config.max_seq_len, config.dataset_ratio)
-print("successfully read %d routes" % sum([len(train), len(valid), len(test)]))  # 1005031
-max_edge_id = max([max(route) for route in routes])  # 40266
-min_edge_id = min([max(route) for route in routes])  # 330
+print("successfully read %d routes" % sum([len(train), len(valid), len(test)]))
+max_edge_id = max([max(route) for route in routes])
+min_edge_id = min([max(route) for route in routes])
 print("min_edge_id = %d, max_edge_id = %d" % (min_edge_id, max_edge_id))
 max_route_len = max([len(route) for route in routes])
 route_lens = [len(route) for route in routes]
@@ -497,7 +494,7 @@ def count_trans(roadnet, data):
   f.close()
 
 # load map
-GeoPoint.AREA_LAT = 41.15
+GeoPoint.AREA_LAT = 41.15 # the latitude of the testing area. In fact, any value is ok in this problem.
 roadnet = Map()
 roadnet.open(config.map_path)
 
@@ -528,9 +525,9 @@ if config.eval_ngram_model:
   #markov_model.train_and_eval_given_dest(train, valid, 2, 10, True, False)
   #markov_model.train_and_eval_given_dest(train, valid, 3, 40, True, False)
   #markov_model.train_and_eval_given_dest(train, valid, 4, 80, True, False)
-  # markov_model.train_and_eval_given_dest(train, valid, 3, 60) # 4W
-  # markov_model.train_and_eval_given_dest(train, valid, 2, 10, use_fast=True) # 4W
-  # markov_model.train_and_eval_given_dest(train, valid, 4, 300) # 4W
+  # markov_model.train_and_eval_given_dest(train, valid, 3, 60) # 40k
+  # markov_model.train_and_eval_given_dest(train, valid, 2, 10, use_fast=True) # 40k
+  # markov_model.train_and_eval_given_dest(train, valid, 4, 300) # 40k
   # markov_model.train_and_eval_given_dest(train, valid, 3, 10, True) # 6K
   input()
 
@@ -568,10 +565,6 @@ with tf.Graph().as_default():
       print(ckpt_name)
       ckpt_path = os.path.join(config.load_path, ckpt_name)
       print('try loading ' + ckpt_path)
-    '''
-    if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
-      print "restore model params from %s" % ckpt.model_checkpoint_path
-      model.saver.restore(sess, ckpt.model_checkpoint_path)'''
     if ckpt_path and tf.gfile.Exists(ckpt_path):
       print("restoring model trainable params from %s" % ckpt_path)
       model.saver.restore(sess, ckpt_path)
@@ -580,35 +573,7 @@ with tf.Graph().as_default():
         print("restore model params failed")
       print("initialize all variables...")
       sess.run(tf.initialize_all_variables())
-    if config.predict_dir and config.encoder_decoder == 'decoder':
-      print('Input forward params for encoder (at %s): ' % config.encoder_load_path)
-      if PY3:
-        encoder_param_name = input()
-      else:
-        encoder_param_name = raw_input()
-      encoder_param_path = os.path.join(config.encoder_load_path, encoder_param_name)
-      print('try loading ' + encoder_param_path)
-      model.encoder_forward_saver.restore(sess, encoder_param_path)
-      print("restoring pre-trained encoder params from %s" % encoder_param_path)
 
-    """
-    # tensorboard
-    # Use the same LOG_DIR where you stored your checkpoint.
-    summary_writer = tf.train.SummaryWriter(config.save_path)
-
-    # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
-    projectorConfig = projector.ProjectorConfig()
-
-    # You can add multiple embeddings. Here we add only one.
-    embedding = projectorConfig.embeddings.add()
-    embedding.tensor_name = model.dest_emb_.name
-    # Link this tensor to its metadata file (e.g. labels).
-    #embedding.metadata_path = os.path.join(config.save_path, 'metadata.tsv')
-
-    # Saves a configuration file that TensorBoard will read during startup.
-    projector.visualize_embeddings(summary_writer, projectorConfig)
-
-    """
     # benchmark
     print("speed benchmark for get_batch()...")
     how_many_tests = 1000
@@ -642,9 +607,3 @@ with tf.Graph().as_default():
       model_valid.eval(sess, valid, True, True, model_train=model)
       model_test.eval(sess, test, False, False, model_train=model)
 input()
-
-
-"""
-plt.hist(route_lens, bins=100, cumulative=True, normed=True)
-plt.show()
-"""
