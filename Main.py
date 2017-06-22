@@ -121,9 +121,10 @@ class Config(object):
                         # And in most time there is no need to set it to 'SPECIFIED_CSSRNN'
                         # So you can just think that you have only three choices, i.e., RNN, CSSRNN and LPIRNN.
   use_bidir_rnn = False # whether to use bidirectional structure in rnn layer
-  eval_mode = False # set it to `False` to skip evaluation on the test set for saving time
-                    # e.g., in the beginning epochs when the loss has not converged,
-                    # there is no need to spend time on evaluating the loss on test set.
+  eval_mode = False # set it to `True` to skip training process on training set and directly go into evaluation process.
+                    # You may switch on it if you only want to check the performance in valid/test set w.r.t. a given ckpt
+                    # Note that its priority is higher than `save_ckpt`,
+                    # which means `save_ckpt` will be compulsively set to `False`
   pretrained_input_emb_path = '' # the file of the pretrained embedding vectors (such as word2vec) of input states
                                  # Each line contains the embedding vector of a state, with the delimiter as ','
                                  # It is recommended to save the file through `np.savetxt()`
@@ -158,7 +159,7 @@ class Config(object):
   fix_seq_len = False  # if True, make each batch with the size [batch_size, config.max_seq_len] (False is faster)
   use_seq_len_in_rnn = False  # whether to use seq_len_ when unrolling rnn. Useless if `fix_seq_len` is `True` (False is faster)
   max_seq_len = 80 # the maximum length of a trajectory, ones larger than it will be omitted in the dataset
-  opt = 'rmsprop' # 'sgd', 'rmsprop', 'adam'
+  opt = 'rmsprop' #the optimizer you want to use, support 'sgd', 'rmsprop' and 'adam'
 
   # for epoch
   epoch_count = 1000
@@ -177,7 +178,6 @@ class Config(object):
   trace_hid_layer = False # set `True` to enable tracing lpi
   trace_input_id = None # if you want to trace the lpi w.r.t. a specific state, just set this.
 
-  # TODO
   def __init__(self, config_path = None):
     if config_path is not None:
       self.load(config_path)
@@ -188,12 +188,11 @@ class Config(object):
     self.workspace = os.path.join(self.workspace, self.dataset_name)
     self.dataset_path = os.path.join(self.workspace, self.file_name)
     self.map_path = os.path.join(self.workspace, "map/")
-    self.set_save_path()
+    self.__set_save_path()
     if self.eval_mode and self.save_ckpt:
       print("Warning, in evaluation mode, automatically set config.save_ckpt to False")
       self.save_ckpt = False
 
-  # TODO
   def printf(self):
     print("========================================\n")
     print("dataset configuration:\n" \
@@ -206,31 +205,23 @@ class Config(object):
               data_size=self.data_size, state_size=self.state_size, ratio=self.dataset_ratio))
 
     print("\nmodel configuration:\n" \
+          "\tmodel_type = {model_type}\n" \
           "\temb_dim = {emb_dim}\n" \
           "\thid_dim = {hid_dim}\n" \
           "\tdeep = {deep}\n" \
           "\tuse_bidir_rnn = {use_bidir_rnn}\n" \
-          "\tuse_constrained_softmax_in_train = {use_constrained_softmax_in_train}\n" \
-          "\tbuild_unconstrained_in_train = {build_unconstrained_in_train}\n" \
           "\tinput_dest = {input_dest}\n" \
           "\tdest_emb = {dest_emb}" \
-      .format(emb_dim=self.emb_dim, hid_dim=self.hidden_dim, deep=self.num_layers,
-              use_constrained_softmax_in_train=self.use_constrained_softmax_in_train,
-              build_unconstrained_in_train=self.build_unconstrained_in_train,
+      .format(model_type=self.model_type, emb_dim=self.emb_dim, hid_dim=self.hidden_dim, deep=self.num_layers,
               input_dest=self.input_dest, dest_emb=self.dest_emb, use_bidir_rnn=self.use_bidir_rnn))
+    if self.model_type == "LPIRNN":
+      print("\tlpi_dim = {lpi_dim}\n" \
+            "\tindividual_task_regularizer = {individual_task_regularizer}\n" \
+            "\tindividual_task_keep_prob = {individual_task_keep_prob}" \
+      .format(lpi_dim=self.lpi_dim, individual_task_regularizer = self.individual_task_regularizer,
+              individual_task_keep_prob = self.individual_task_keep_prob))
 
-    if self.predict_dir:
-      print("\ndirection_method:\n" \
-            "\tencoder_decoder = {encoder_decoder}\n" \
-            "\tdir_sigma = {dir_sigma}\n" \
-            "\tdir_granularity = {dir_granularity}\n" \
-            "\tdecoder_regularizer = {decoder_regularizer}\n" \
-            "\tdecoder_keep_prob = {decoder_keep_prob}" \
-      .format(encoder_decoder=self.encoder_decoder, dir_sigma=self.dir_sigma,
-              dir_granularity=self.dir_granularity, decoder_regularizer = self.decoder_regularizer,
-              decoder_keep_prob = self.decoder_keep_prob))
-
-    print("\nparams:\n" \
+    print("\ntraining params:\n" \
           "\tbatch = {batch_size}\n" \
           "\tlr = {lr}\n" \
           "\tlr_decay = {lr_decay}\n" \
@@ -247,36 +238,55 @@ class Config(object):
               use_seq_len_in_rnn=self.use_seq_len_in_rnn, opt=self.opt))
     print("\n========================================")
 
-  # TODO
   def set_config(self, routes, roadnet):
     """
     decide some attributes in config by dataset `routes`
-    :param routes: the whole dataset, list of lists
+    :param routes: the whole dataset, list of lists, each entry is the road id
     :return: Nothing
     """
     self.data_size = len(routes)
-    max_edge_id = max([max(route) for route in routes])  # 40266
-    min_edge_id = min([max(route) for route in routes])  # 330
+    max_edge_id = max([max(route) for route in routes])
+    min_edge_id = min([max(route) for route in routes])
     print("min_edge_id = %d, max_edge_id = %d" % (min_edge_id, max_edge_id))
     max_route_len = max([len(route) for route in routes])
     print("max seq_len = %d" % max_route_len)
     self.EOS_ID = max_edge_id + 1
     self.state_size = max_edge_id + 2
 
-    # if self.steps_per_epoch_in_train is None:
-    #  self.steps_per_epoch_in_train = int(self.dataset_ratio[0] * len(routes) / self.batch_size)
     if self.samples_per_epoch_in_train < 0:
       self.samples_per_epoch_in_train = int(self.dataset_ratio[0] * len(routes))
-    # self.steps_per_epoch_in_valid = int(self.dataset_ratio[1] * len(routes) / self.batch_size)
 
     # Note that we should pad target by the adjacent state of state `PAD_ID`.
     # Since if we also pad the target by `PAD_ID`, when computing using constrained softmax,
     # the logit of the target state `PAD_ID` will result in 0 since it is impossible to
     # transfer from `PAD_ID` to `PAD_ID` and if we use `-log(logit(PAD_ID))` to compute the cross-entropy,
     # `nan` will emerge and unfortunately it is useless to apply a mask to the result (`0 * nan` will not result to 0)
+    # Here I use `0` to be the `PAD_ID`, and the road 0 is also a valid road in the road network
+    # which means it has an adjacent state (i.e., roadnet.edges[config.PAD_ID].adjList_ids[0]),
+    # And since there is no historical trajectory that passes road 0, I decide to leverage it.
     self.TARGET_PAD_ID = roadnet.edges[config.PAD_ID].adjList_ids[0]
 
-  def set_save_path(self):
+  def load(self, config_path):
+    """
+    Load config file
+    Format: standard format supported by `ConfigParser`
+    The parameters which do not appear in the config file will be set as the default values.
+    :param config_path: the file path of the config file
+    :return: nothing
+    """
+    cp = configparser.ConfigParser()
+    cp.read(config_path)
+    secs =  cp.sections()
+    for sec in secs:
+      for k,v in cp.items(sec):
+        if hasattr(self, k):
+          setattr(self, k, v)
+        else:
+          raise Exception("no attribute named \"%s\" in class \"Config\"" % k)
+    self.__reformat()
+    return
+
+  def __set_save_path(self):
     """
     generate a string represents the capacity and settings of the model
     and use this string to set `self.save_path` and `self.load_path`
@@ -302,7 +312,7 @@ class Config(object):
     self.save_path = os.path.join(ckpt_home, self.model_type + "/" + model_capacity_str)
     self.load_path = os.path.join(ckpt_home, self.model_type + "/" + model_capacity_str)
 
-  def reformat(self):
+  def __reformat(self):
     """
     reformat the attributes from string to the correct type
     used after `load()`
@@ -354,37 +364,15 @@ class Config(object):
     self.trace_hid_layer = bool(du.strtobool(self.trace_hid_layer))
     self.trace_input_id = int(self.trace_input_id)
 
-  # TODO
-  def load(self, config_path):
-    """
-    Load config file
-    Format: standard format supported by `ConfigParser`
-    The parameters which do not appear in the config file will be set as the default values.
-    :param config_path:
-    :return: nothing
-    """
-    cp = configparser.ConfigParser()
-    cp.read(config_path)
-    secs =  cp.sections()
-    for sec in secs:
-      for k,v in cp.items(sec):
-        if hasattr(self, k):
-          setattr(self, k, v)
-        else:
-          raise Exception("no attribute named \"%s\" in class \"Config\"" % k)
-    self.reformat()
-    return
-
 class MapInfo(object):
   def __init__(self, map, config):
     self.map = map
     self.config = config
-    self.adj_mat, self.adj_mask = self.get_adjmat_and_mask(config.PAD_ID)
-    self.dir_distris = self.get_dir_distributions(config.dir_granularity, config.dir_sigma)
-    self.dest_coord = self.get_dest_coord()
+    self.adj_mat, self.adj_mask = self.__get_adjmat_and_mask(config.PAD_ID)
+    self.dest_coord = self.__get_dest_coord()
     return
 
-  def get_adjmat_and_mask(self, pad_id):
+  def __get_adjmat_and_mask(self, pad_id):
     """
     `adjmat` has the shape of `(#edge, max_len)`, where `max_len` is the maximum of #adjacent_edges of each edge.
     `adjmat[i]` records all the adjacent edges of edge_i (including padding with id = `pad_id`)
@@ -410,44 +398,11 @@ class MapInfo(object):
       adjmask.append([1.0] * lens[i] + [0.0] * (max_len - lens[i]))
     return np.array(adjmat), np.array(adjmask)
 
-  def get_dir_distributions(self, angle_granularity, sigma):
-    map = self.map
-    def calc_deg(p1, p2):
-      """
-      compute the degree of p1->p2 relative to the horizontal line, [0, 360)
-      :param p1: Pos type
-      :param p2: Pos type
-      :return: float
-      """
-      try:
-        cos_val = (p2[0] - p1[0]) / math.sqrt((p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[1] - p1[1]) * (p2[1] - p1[1]))
-      except:
-        return 0.0  # if dist(p1, p2) = 0
-      rad = math.acos(cos_val)
-      if p2[1] < p1[1]:  # [pi, 2pi]
-        rad = 2 * math.pi - rad
-      return rad / math.pi * 180.0
-
-    distributions = []
-    for edge in map.edges:
-      p1 = map.nodes[edge.startNodeId]
-      p2 = map.nodes[edge.endNodeId]
-      deg = calc_deg(p1, p2)
-      distri = []
-      for bucket_deg in np.linspace(0.0, 360.0, angle_granularity + 1)[0:-1]:
-        if abs(bucket_deg - deg) < 360.0 - abs(bucket_deg - deg):
-          delta = abs(bucket_deg - deg)
-        else:
-          delta = 360.0 - abs(bucket_deg - deg)
-        distri.append(math.exp(-delta * delta / (2 * sigma * sigma)))
-      # normalization
-      summation = sum(distri)
-      for i in range(len(distri)):
-        distri[i] /= summation
-      distributions.append(distri)
-    return np.array(distributions)
-
-  def get_dest_coord(self):
+  def __get_dest_coord(self, do_normalization = True):
+    """
+    Extract the coordinates of each road (end node)
+    :return: ndarray with shape of (state_size, 2)
+    """
     map = self.map
     dests = []
     for edge in map.edges:
@@ -455,21 +410,23 @@ class MapInfo(object):
       dests.append([node.lat, node.lon])
     # normalize
     np_dests = np.array(dests)
-    minlat, maxlat = min(np_dests[:,0]), max(np_dests[:,0])
-    minlon, maxlon = min(np_dests[:,1]), max(np_dests[:,1])
-    for row in range(np_dests.shape[0]):
-      np_dests[row][0] = (np_dests[row][0] - minlat) / (maxlat-minlat)
-      np_dests[row][1] = (np_dests[row][1] - minlon) / (maxlon-minlon)
+    if do_normalization:
+      minlat, maxlat = min(np_dests[:, 0]), max(np_dests[:, 0])
+      minlon, maxlon = min(np_dests[:, 1]), max(np_dests[:, 1])
+      for row in range(np_dests.shape[0]):
+        np_dests[row][0] = (np_dests[row][0] - minlat) / (maxlat - minlat)
+        np_dests[row][1] = (np_dests[row][1] - minlon) / (maxlon - minlon)
     return np_dests
 
-def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.7, 0.2, 0.1]):
+def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.8, 0.1, 0.1]):
   """
   Read the route data
+  data format: one traj  one line with delimiter as ','
   :param file_path: path of the file to load
   :param max_count: maximum count of routes to be loaded, default is -1 which loads all routes.
   :param max_seq_len: samples longer than `max_seq_len` will be skipped.
   :param ratio: ratio[train, valid, test] for split the dataset, automatically normalized if sum(ratio) is not 1.
-  :return: three lists of lists, in order: train, valid, test.
+  :return: three lists of lists, in the order: train, valid, test.
   """
   file = open(file_path)
   routes = []
@@ -502,7 +459,7 @@ if config.direct_stdout_to_file:
   sys.stdout = config.log_file
 
 
-routes, train, valid, test = read_data(config.dataset_path, config.data_size, config.max_seq_len)
+routes, train, valid, test = read_data(config.dataset_path, config.data_size, config.max_seq_len, config.dataset_ratio)
 print("successfully read %d routes" % sum([len(train), len(valid), len(test)]))  # 1005031
 max_edge_id = max([max(route) for route in routes])  # 40266
 min_edge_id = min([max(route) for route in routes])  # 330
