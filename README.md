@@ -39,7 +39,7 @@ The map is recommended to be constructed from [OpenStreetMap](http://www.openstr
 You can get your own road network file from OpenStreetMap by selecting the rectangle area and export the file by, say, `Overpass API` (the first choice in the web page).
 Then you will be prompted to download a data named `map` which is actually an XML-formatted file. 
 By executing `OSMGen.cs` (you may have to maually set the file path in the code) on the raw map file, the `nodeOSM.txt` and `edgeOSM.txt` will be automatically extracted. 
-The format of these two file are shown as follows.
+The format of these two files are shown as follows.
 
 #### nodeOSM.txt
 Format: `[NodeID]`\t`[latitude]`\t`[longitude]`
@@ -112,10 +112,10 @@ The project will also need following package dependencies
 - Run main function in `main.py`   
 
 ### Details of configuration
-All model setting are included in `config` file or can be set through the instance of `Config` class.
-To run the model, the following settings are important and should be set according your own dataset.
+All model settings are included in `config` file or can be set through the instance of `Config` class.
+To run the model, the following settings are important and should be set according to your own dataset.
 - `dataset_name`: give a name to your own dataset and put all stuffs w.r.t. this dataset into the directory named by 
-this name (as the directory tree structure as the above section).
+this name (as the directory tree structure in the above section).
 - `workspace`: the place you want to put all data in, e.g. `\home\data`. Note that you may have several datasets, 
 e.g., with the names being, `dataset1`, `dataset2`, ... .
 The directory may like as follows,
