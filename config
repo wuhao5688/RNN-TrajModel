@@ -6,7 +6,7 @@ data_size = -1
 
 [ckpt]
 save_ckpt = True
-load_ckpt = True
+load_ckpt = False
 max_ckpt_to_keep = 100
 compute_ppl = False
 direct_stdout_to_file = False
@@ -14,6 +14,7 @@ samples_per_epoch_in_train = -1
 use_v2_saver = False
 
 [model configuration]
+model_type = CSSRNN
 hidden_dim = 50
 emb_dim = 50
 num_layers = 1
@@ -21,7 +22,6 @@ rnn = lstm
 use_bidir_rnn = False
 eval_mode = False
 # pretrained_input_emb_path = /data/porto_6k/ckpt/embeddings_400.csv
-model_type = LPIRNN
 input_dest = True
 dest_emb = True
 

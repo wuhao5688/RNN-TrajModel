@@ -4,11 +4,6 @@ The source code of my paper.
 
 Hao Wu, Ziyang Chen, Weiwei Sun, Baihua Zheng, Wei Wang, Modeling Trajectories with Recurrent Neural Networks. IJCAI 2017.
 
-## Environment
-- Python: py2/py3 compatible
-- Tensorflow version: 12.0 (You may have to change some code if you want to use higher version of Tensorflow since some APIs have been changed after v1.0)
-- OS: Linux (I've tried this code on Windows and there may occur some strange runtime problems.)
-
 ## Directory Structure
 The directory structure may be as follows
 ```
@@ -40,7 +35,11 @@ codespace
 
 ## Format of the Data
 ### Map/road network data
-The map is constructed from OpenStreetMap by processing with `OSM.cs`
+The map is recommended to be constructed from [OpenStreetMap](http://www.openstreetmap.org/export#).
+You can get your own road network file from OpenStreetMap by selecting the rectangle area and export the file by, say, `Overpass API` (the first choice in the web page).
+Then you will be prompted to download a data named `map` which is actually an XML-formatted file. 
+By executing `OSMGen.cs` (you may have to maually set the file path in the code) on the raw map file, the `nodeOSM.txt` and `edgeOSM.txt` will be automatically extracted. 
+The format of these two file are shown as follows.
 
 ####nodeOSM.txt
 Format: `[NodeID]`\t`[latitude]`\t`[longitude]`
@@ -87,11 +86,54 @@ The format of trajectory data is very simple. The data may like as follows,
 432,214,678,532,3,5,74,13,123,67,4,
 ...
 ```
-Each line represents a trajectory with the definition in the paper.
-i.e.,
->Definition 2 (Trajectory). A trajectory $$T$$ in the form of $$r_1 \rightarrow r_2 \rightarrow \cdots \rightarrow r_k$$ 
-captures the movement of an object from $$r_1$$ to $$r_2$$ and so on to $$r_k$$ along the road network $$G$$, where 
-every two consecutive road segments are connected, i.e., $$\forall r_i, r_{i+1} \in T, r_i, r_{i+1}\in E ∧ r_i.e = r_{i+1}.s.
+Each line records several edge ids in the road network, which represents a trajectory w.r.t. the definition introduced 
+in the paper, i.e.,
+>Definition 2 (Trajectory). 
+A trajectory T in the form of r_1 → r_2 → … → r_k captures the movement of an object from r_1 to r_2 and so on to r_k 
+along the road network G, where every two consecutive road segments are connected, i.e., \forall r_i, r_{i+1} ∈ T, 
+r_i, r_{i+1}∈ E ∧ r_i.e = r_{i+1}.s.
+
+## Environment and Package Dependencies
+The code can be successfully run under following environments
+- Python: py2/py3 compatible
+- Tensorflow version: 12.0 (You may have to change some code if you want to use higher version of Tensorflow since some APIs have been changed after v1.0)
+- OS: Linux (I've tried this code on Windows and there may occur some strange runtime problems.)
+
+[TODO] I'll modify some code to make it compatible with newest API of Tensorflow.
+
+The project will also need following package dependencies
+- Numpy
+- Matplotlib
 
 ## Usage
-Tobe completed.
+- Put the codes and the config file into the code space. Leave the trajectory data and the map data in the workspace
+ following the directory structure as above.
+- Modify `config` file
+- Run main function in `main.py`   
+
+### Details of configuration
+All model setting are included in `config` file or can be set through the instance of `Config` class.
+To run the model, the following settings are important and should be set according your own dataset.
+- `dataset_name`: give a name to your own dataset and put all stuffs w.r.t. this dataset into the directory named by 
+this name (as the directory tree structure as the above section).
+- `workspace`: the place you want to put all data in, e.g. `\home\data`. Note that you may have several datasets, 
+e.g., with the names being, `dataset1`, `dataset2`, ... .
+The directory may like as follows,
+```
+/home/data/dataset1/data
+/home/data/dataset1/map
+/home/data/dataset1/ckpt
+ 
+/home/data/dataset2/data
+/home/data/dataset2/map
+/home/data/dataset2/ckpt
+...
+```
+- `file_name`: set this as the name of your own trajectory file. If you follow the directory tree sturcture as above,
+you may set the `file_name` as `data/trajectory.txt` since the file is located in the `data/` directory.
+
+If you have correctly set these fields in the config, the model will be able to run with configuration printed in the screen.
+
+To get the details of the remaining attributes of config, please refer to `main.py`. Each field is described in detail
+ in comments.
+
