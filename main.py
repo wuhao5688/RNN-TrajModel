@@ -22,69 +22,32 @@ if sys.version > '3':
     PY3 = True
 else:
     PY3 = False
-from tensorflow.contrib.tensorboard.plugins import projector
+#from tensorflow.contrib.tensorboard.plugins import projector
 
-routeFile = "/data/porto/porto_cleaned_mm_edges.txt"
-map_path = "/data/porto/map/"
-
-def test_angle(map, angle_granularity = 60, sigma = 5.0):
-  while(True):
-    # edge = np.random.choice(map.edges)
-    edge = map.edges[config.trace_input_id]
-    print("pick up edge " + str(edge.id))
-
-    def calc_deg(p1, p2):
-      cos_val = (p2[0] - p1[0]) / math.sqrt((p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[1] - p1[1]) * (p2[1] - p1[1]))
-      rad = math.acos(cos_val)
-      if p2[1] < p1[1]:  # [pi, 2pi]
-        rad = 2 * math.pi - rad
-      return rad / math.pi * 180.0
-
-    adj_dists = []
-    for adj_edge in edge.adjList:
-
-      p1 = map.nodes[adj_edge.startNodeId]
-      p2 = map.nodes[adj_edge.endNodeId]
-      deg = calc_deg(p1, p2)
-      print("adj_edge %d deg = %.3f" % (adj_edge.id, deg))
-      probs = []
-      for bucket_deg in np.linspace(0.0, 360.0, angle_granularity + 1)[0:-1]:
-        if abs(bucket_deg - deg) < 360.0 - abs(bucket_deg - deg):
-          delta = abs(bucket_deg - deg)
-        else:
-          delta = 360.0 - abs(bucket_deg - deg)
-        probs.append(math.exp(-delta * delta / (2 * sigma * sigma)))
-      # normalization
-      summation = sum(probs)
-      for i in range(len(probs)):
-        probs[i] /= summation
-      adj_dists.append(probs)
-    buckets = np.linspace(0.0, 360.0, angle_granularity + 1)[0:-1]
-    for i in range(len(adj_dists)):
-      probs = adj_dists[i]
-      plt.plot(buckets, probs)
-      plt.title(str(edge.adjList_ids[i]))
-      plt.show()
-    for i in range(len(adj_dists)):
-      probs = adj_dists[i]
-      plt.plot(buckets, probs)
-
-    plt.show()
+#routeFile = "/data/porto/porto_cleaned_mm_edges.txt"
+#map_path = "/data/porto/map/"
 
 # workspace (e.g., /data)
-#   | dataset_name (e.g., porto_6k)
-#     | data
-#       | your_traj_file.txt
-#     | map
-#       | nodeOSM.txt
-#       | edgeOSM.txt
-#     | ckpt
+#     | dataset_name1 (e.g., porto_6k)
+#         | data
+#         |   | your_traj_file.txt
+#         | map  (w.r.t. porto_6k)
+#         |   | nodeOSM.txt
+#         |   | edgeOSM.txt
+#         | ckpt
+#     | dataset_name2 (e.g., porto_40k)
+#         | data
+#         |   | your_traj_file.txt
+#         | map  (w.r.t. porto_40k)
+#         |   | nodeOSM.txt
+#         |   | edgeOSM.txt
+#         | ckpt
 
 
 class Config(object):
   # dataset configuration
-  dataset_name = "porto_40k" # 'porto_40k', 'porto_6k'
-  dataset_path = None
+  dataset_name = "porto_40k" # e.g., 'porto_40k', 'porto_6k'
+  dataset_path = None # do not set this manually
   workspace = '/data' # the true workspace will actually be workspace + '/' + dataset_name
   file_name = "example.txt"
   data_size = -1 # how many trajs you want to read in. `-1` means reading in all trajectories
@@ -100,22 +63,23 @@ class Config(object):
   load_path = None # do not set this manually, the path will be automatically generated according to the model
   save_path = None # do not set this manually, the path will be automatically generated according to the model
 
-  loss_for_filename = "loss_p" # do not set this manually
+  loss_for_filename = "loss_p" # use which loss to name the ckpt file. All loss in TrajModel.loss_dict can be set here.
+                               # Here, "loss_p" is just the NLL loss of the sequence.
   max_ckpt_to_keep = 100
   load_ckpt = True
   save_ckpt = True
-  compute_ppl = True
+  compute_ppl = True # whether to compute the perplexity (sequence-level, not word-level)
   direct_stdout_to_file = False # if True, all stuffs will be printed into log file
-  log_filename = None
-  log_file = None
+  log_filename = None # do not set this manually
+  log_file = None # do not set this manually
   use_v2_saver = False # tensorflow 0.12 starts to use ckpt V2
                        # and the code is written in 0.10 or 0.11 (I've forgotten the exact version D:) which is still in ckpt V1
 
   # model configuration
-  hidden_dim = 800  # hidden units of rnn
-  emb_dim = 800  # the dimension of embedding vector (both input states and destination states)
+  hidden_dim = 400  # hidden units of rnn
+  emb_dim = 400  # the dimension of embedding vector (both input states and destination states)
   num_layers = 1  # how many layers the rnn has, which means you can have a deep rnn for the rnn layer
-  rnn = 'lstm' #'rnn', 'gru', 'lstm'
+  rnn = 'lstm' #'rnn', 'gru', 'lstm'   p.s. 'lstm' is the best
   model_type = 'CSSRNN' # 'RNN', 'CSSRNN', 'SPECIFIED_CSSRNN', 'LPIRNN'
                         # 'SPECIFIED_CSSRNN' means you can specify something (e.g., different speed boosting strategy, etc.)
                         # For more details, please refer `TrajModel.build_RNNLM_model()`
@@ -438,8 +402,8 @@ class MapInfo(object):
 
 def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.8, 0.1, 0.1]):
   """
-  Read the route data
-  data format: one traj  one line with delimiter as ','
+  Read in the route data
+  data format: one traj one line with delimiter as ','
   :param file_path: path of the file to load
   :param max_count: maximum count of routes to be loaded, default is -1 which loads all routes.
   :param max_seq_len: samples longer than `max_seq_len` will be skipped.
@@ -464,164 +428,160 @@ def read_data(file_path, max_count=-1, max_seq_len = None, ratio=[0.8, 0.1, 0.1]
   test = [routes[i] for i in range(int(len(routes) * (ratio[0] + ratio[1])), len(routes))]
   return routes, train, valid, test
 
-# load data
-config = Config("config")
-timestr = time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime(time.time()))
-if config.direct_stdout_to_file:
-  model_str = config.model_type
-  config.log_filename = "log_" + timestr + "_" + config.dataset_name + "_" + model_str + ".txt"
-  config.log_file = open(config.log_filename, 'w')
-  sys.stdout = config.log_file
 
+if __name__ == "__main__":
+  config = Config("config")
+  # set log file
+  timestr = time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime(time.time())) # use for naming the log file
+  if config.direct_stdout_to_file:
+    model_str = config.model_type
+    config.log_filename = "log_" + timestr + "_" + config.dataset_name + "_" + model_str + ".txt"
+    config.log_file = open(config.log_filename, 'w')
+    sys.stdout = config.log_file
 
-routes, train, valid, test = read_data(config.dataset_path, config.data_size, config.max_seq_len, config.dataset_ratio)
-print("successfully read %d routes" % sum([len(train), len(valid), len(test)]))
-max_edge_id = max([max(route) for route in routes])
-min_edge_id = min([max(route) for route in routes])
-print("min_edge_id = %d, max_edge_id = %d" % (min_edge_id, max_edge_id))
-max_route_len = max([len(route) for route in routes])
-route_lens = [len(route) for route in routes]
+  # process data
+  routes, train, valid, test = read_data(config.dataset_path, config.data_size, config.max_seq_len, config.dataset_ratio)
+  print("successfully read %d routes" % sum([len(train), len(valid), len(test)]))
+  max_edge_id = max([max(route) for route in routes])
+  min_edge_id = min([max(route) for route in routes])
+  print("min_edge_id = %d, max_edge_id = %d" % (min_edge_id, max_edge_id))
+  max_route_len = max([len(route) for route in routes])
+  route_lens = [len(route) for route in routes]
+  print("train:%d, valid:%d, test:%d" % (len(train), len(valid), len(test)))
+  print(max(route_lens))
+  plt.hist(route_lens, bins=config.max_seq_len, cumulative=True, normed=True)
+  plt.show()
 
-print("train:%d, valid:%d, test:%d" % (len(train), len(valid), len(test)))
-print(max(route_lens))
-plt.hist(route_lens, bins=config.max_seq_len, cumulative=True, normed=True)
-#plt.show()
+  def count_trans(roadnet, data):
+    # initialization
+    print("start initialization")
+    trans = []
+    for edge in roadnet.edges:
+      adjs = {}
+      for adj_edge_id in edge.adjList_ids:
+        adjs[adj_edge_id] = 0
+      trans.append(adjs)
 
-def count_trans(roadnet, data):
-  # initialization
-  print("start initialization")
-  trans = []
-  for edge in roadnet.edges:
-    adjs = {}
-    for adj_edge_id in edge.adjList_ids:
-      adjs[adj_edge_id] = 0
-    trans.append(adjs)
+    # do stats
+    print("start stats")
+    for route in data:
+      for i in range(len(route) - 1):
+         trans[route[i]][route[i + 1]] += 1
 
-  # do stats
-  print("start stats")
-  for route in data:
-    for i in range(len(route) - 1):
-       trans[route[i]][route[i + 1]] += 1
+    f = open("count_trans", "w")
+    for edge in roadnet.edges:
+      f.write(str(edge.id) + " ")
+      for adj_edge_id in edge.adjList_ids:
+        f.write("|" + str(adj_edge_id) + " :\t" + str(trans[edge.id][adj_edge_id]) + "\t")
+      f.write("\n")
+    f.close()
 
-  f = open("count_trans", "w")
-  for edge in roadnet.edges:
-    f.write(str(edge.id) + " ")
-    for adj_edge_id in edge.adjList_ids:
-      f.write("|" + str(adj_edge_id) + " :\t" + str(trans[edge.id][adj_edge_id]) + "\t")
-    f.write("\n")
-  f.close()
+  # load map
+  GeoPoint.AREA_LAT = 41.15 # the latitude of the testing area. In fact, any value is ok in this problem.
+  roadnet = Map()
+  roadnet.open(config.map_path)
 
-# load map
-GeoPoint.AREA_LAT = 41.15 # the latitude of the testing area. In fact, any value is ok in this problem.
-roadnet = Map()
-roadnet.open(config.map_path)
+  # set config
+  config.set_config(routes, roadnet)
+  config.printf()
 
-# set config
-config.set_config(routes, roadnet)
-config.printf()
+  # extract map info
+  mapInfo = MapInfo(roadnet, config)
 
-if config.trace_hid_layer:
-  test_angle(roadnet)
-# count_trans(roadnet, routes)
+  if config.eval_ngram_model:
+    # n-gram model eval
+    markov_model = N_gram_model(roadnet, config)
+    # markov_model.train_and_eval(train, valid, 5, config.max_seq_len, given_dest=True,use_fast=True, compute_all_gram=True)
+    print("======================test set========================")
+    markov_model.train_and_eval_given_dest(train, test, 3, 600, use_fast=True)
+    #markov_model.train_and_eval(train, test, 4, config.max_seq_len, use_fast=True, compute_all_gram=True)
+    #markov_model.train_and_eval_given_dest(train, test, 2, 10, True, False)
+    #markov_model.train_and_eval_given_dest(train, test, 3, 40, True, False)
+    #markov_model.train_and_eval_given_dest(train, test, 4, 80, True, False)
+    print("======================valid set========================")
+    markov_model.train_and_eval_given_dest(train, valid, 3, 600, use_fast=True)
+    #markov_model.train_and_eval(train, valid, 4, config.max_seq_len, use_fast=True, compute_all_gram=True)
+    #markov_model.train_and_eval_given_dest(train, valid, 2, 10, True, False)
+    #markov_model.train_and_eval_given_dest(train, valid, 3, 40, True, False)
+    #markov_model.train_and_eval_given_dest(train, valid, 4, 80, True, False)
+    # markov_model.train_and_eval_given_dest(train, valid, 3, 60) # 40k
+    # markov_model.train_and_eval_given_dest(train, valid, 2, 10, use_fast=True) # 40k
+    # markov_model.train_and_eval_given_dest(train, valid, 4, 300) # 40k
+    # markov_model.train_and_eval_given_dest(train, valid, 3, 10, True) # 6K
+    input()
 
-# get map info
-mapInfo = MapInfo(roadnet, config)
+  # construct model
+  with tf.Graph().as_default():
+    initializer = tf.random_uniform_initializer(-config.init_scale, config.init_scale)
+    model_scope = "Model"
+    with tf.name_scope("Train"):
+      with tf.variable_scope(model_scope, reuse=None, initializer=initializer):
+        model = TrajModel(not config.trace_hid_layer, config, train, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
 
-if config.eval_ngram_model:
-  # n-gram model eval
-  markov_model = N_gram_model(roadnet, config)
-  # markov_model.train_and_eval(train, valid, 5, config.max_seq_len, given_dest=True,use_fast=True, compute_all_gram=True)
-  print("======================test set========================")
-  markov_model.train_and_eval_given_dest(train, test, 3, 600, use_fast=True)
-  #markov_model.train_and_eval(train, test, 4, config.max_seq_len, use_fast=True, compute_all_gram=True)
-  #markov_model.train_and_eval_given_dest(train, test, 2, 10, True, False)
-  #markov_model.train_and_eval_given_dest(train, test, 3, 40, True, False)
-  #markov_model.train_and_eval_given_dest(train, test, 4, 80, True, False)
-  print("======================valid set========================")
-  markov_model.train_and_eval_given_dest(train, valid, 3, 600, use_fast=True)
-  #markov_model.train_and_eval(train, valid, 4, config.max_seq_len, use_fast=True, compute_all_gram=True)
-  #markov_model.train_and_eval_given_dest(train, valid, 2, 10, True, False)
-  #markov_model.train_and_eval_given_dest(train, valid, 3, 40, True, False)
-  #markov_model.train_and_eval_given_dest(train, valid, 4, 80, True, False)
-  # markov_model.train_and_eval_given_dest(train, valid, 3, 60) # 40k
-  # markov_model.train_and_eval_given_dest(train, valid, 2, 10, use_fast=True) # 40k
-  # markov_model.train_and_eval_given_dest(train, valid, 4, 300) # 40k
-  # markov_model.train_and_eval_given_dest(train, valid, 3, 10, True) # 6K
-  input()
+    with tf.name_scope("Valid"):
+      with tf.variable_scope(model_scope, reuse=True):
+        model_valid = TrajModel(False, config, valid, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
 
-# construct model
-with tf.Graph().as_default():
-  initializer = tf.random_uniform_initializer(-config.init_scale, config.init_scale)
-  model_scope = "Model"
-  with tf.name_scope("Train"):
-    with tf.variable_scope(model_scope, reuse=None, initializer=initializer):
-      model = TrajModel(not config.trace_hid_layer, config, train, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
+    with tf.name_scope("Test"):
+      with tf.variable_scope(model_scope, reuse=True):
+        model_test = TrajModel(False, config, test, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
 
-  with tf.name_scope("Valid"):
-    with tf.variable_scope(model_scope, reuse=True):
-      model_valid = TrajModel(False, config, valid, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
-
-  with tf.name_scope("Test"):
-    with tf.variable_scope(model_scope, reuse=True):
-      model_test = TrajModel(False, config, test, model_scope=model_scope, map=roadnet, mapInfo=mapInfo)
-
-  # sv = tf.train.Supervisor(logdir=config.load_path)
-  # with sv.managed_session() as sess:
-  sess_config = tf.ConfigProto()
-  # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
-  # sess_config.gpu_options.allow_growth = True
-  with tf.Session(config=sess_config) as sess:
-
-    # stuff for ckpt
-    ckpt_path = None
-    if config.load_ckpt:
-      print('Input training ckpt filename (at %s): ' % config.load_path)
-      if PY3:
-        ckpt_name = input()
-      else:
-        ckpt_name = raw_input()
-      print(ckpt_name)
-      ckpt_path = os.path.join(config.load_path, ckpt_name)
-      print('try loading ' + ckpt_path)
-    if ckpt_path and tf.gfile.Exists(ckpt_path):
-      print("restoring model trainable params from %s" % ckpt_path)
-      model.saver.restore(sess, ckpt_path)
-    else:
+    # sv = tf.train.Supervisor(logdir=config.load_path)
+    # with sv.managed_session() as sess:
+    sess_config = tf.ConfigProto()
+    # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
+    # sess_config.gpu_options.allow_growth = True
+    with tf.Session(config=sess_config) as sess:
+      # stuff for ckpt
+      ckpt_path = None
       if config.load_ckpt:
-        print("restore model params failed")
-      print("initialize all variables...")
-      sess.run(tf.initialize_all_variables())
+        print('Input training ckpt filename (at %s): ' % config.load_path)
+        if PY3:
+          ckpt_name = input()
+        else:
+          ckpt_name = raw_input()
+        print(ckpt_name)
+        ckpt_path = os.path.join(config.load_path, ckpt_name)
+        print('try loading ' + ckpt_path)
+      if ckpt_path and tf.gfile.Exists(ckpt_path):
+        print("restoring model trainable params from %s" % ckpt_path)
+        model.saver.restore(sess, ckpt_path)
+      else:
+        if config.load_ckpt:
+          print("restore model params failed")
+        print("initialize all variables...")
+        sess.run(tf.initialize_all_variables())
 
-    # benchmark
-    print("speed benchmark for get_batch()...")
-    how_many_tests = 1000
-    t1 = time.time()
-    for _ in range(how_many_tests):
-      model.get_batch(model.data, config.batch_size, config.max_seq_len)
-    t2 = time.time()
-    print("%.4f ms per batch, %.4fms per sample, batch_size = %d" % (float(t2-t1)/how_many_tests*1000.0,
-                                                                   float(t2-t1)/how_many_tests/config.batch_size*1000.0,
-                                                                   config.batch_size))
+      # benchmark for testing speed
+      print("speed benchmark for get_batch()...")
+      how_many_tests = 1000
+      t1 = time.time()
+      for _ in range(how_many_tests):
+        model.get_batch(model.data, config.batch_size, config.max_seq_len)
+      t2 = time.time()
+      print("%.4f ms per batch, %.4fms per sample, batch_size = %d" % (float(t2-t1)/how_many_tests*1000.0,
+                                                                     float(t2-t1)/how_many_tests/config.batch_size*1000.0,
+                                                                     config.batch_size))
 
-    # use for timeline trace (unstable, need lots of memory)
-    run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-    run_metadata = tf.RunMetadata()
+      # use for timeline trace (unstable, need lots of memory)
+      run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+      run_metadata = tf.RunMetadata()
 
-    print('start benchmarking...')
-    model.speed_benchmark(sess, config.samples_for_benchmark)
-    # timeline generation
-    model_valid.speed_benchmark(sess, config.samples_for_benchmark)
-    print("start training...")
+      print('start benchmarking...')
+      model.speed_benchmark(sess, config.samples_for_benchmark)
+      # timeline generation
+      model_valid.speed_benchmark(sess, config.samples_for_benchmark)
+      print("start training...")
 
-    if config.direct_stdout_to_file:
-      config.log_file.close()
-      config.log_file = open(config.log_filename, "a+")
-      sys.stdout = config.log_file
+      if config.direct_stdout_to_file:
+        config.log_file.close()
+        config.log_file = open(config.log_filename, "a+")
+        sys.stdout = config.log_file
 
-    # let's go :)
-    for ep in range(config.epoch_count):
-      if not config.eval_mode:
-        model.train_epoch(sess, train)
-      model_valid.eval(sess, valid, True, True, model_train=model)
-      model_test.eval(sess, test, False, False, model_train=model)
-input()
+      # let's go :)
+      for ep in range(config.epoch_count):
+        if not config.eval_mode:
+          model.train_epoch(sess, train)
+        model_valid.eval(sess, valid, True, True, model_train=model)
+        model_test.eval(sess, test, False, False, model_train=model)
+  input()

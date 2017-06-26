@@ -21,7 +21,7 @@ rnn = lstm
 use_bidir_rnn = False
 eval_mode = False
 # pretrained_input_emb_path = /data/porto_6k/ckpt/embeddings_400.csv
-model_type = CSSRNN
+model_type = LPIRNN
 input_dest = True
 dest_emb = True
 

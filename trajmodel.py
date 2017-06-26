@@ -80,40 +80,13 @@ class TrajModel(object):
       self.adj_mask_ = tf.constant(self.adj_mask, config.float_type, name="adj_mask")
       self.build_RNNLM_model(train_phase)
     elif config.model_type == "LPIRNN":
+      self.adj_mat_ = tf.constant(self.adj_mat, config.int_type, name="adj_mat")
+      self.adj_mask_ = tf.constant(self.adj_mask, config.float_type, name="adj_mask")
       self.build_LPIRNN_model(train_phase)
     else: # build traditional RNN language model
       self.build_RNNLM_model(train_phase)
 
-  def build_max_predict_loss(self, max_prediction_flat_, targets_flat_, use_onehot):
-    """
-    Build the accuracy of predicting the next state by the one with maximum prob.
-    "_flat_" means the first dimension should be `batch*t` rather than `batch`
-    :param max_prediction_flat_: [batch*t, max_adj_num], one-hot, or [batch*t], int
-    :param targets_flat_: [batch*t, max_adj_num], one-hot, or [batch*t], int
-    :param use_onehot: bool, whether the representation is by one-hot or by label
-    :return: float, the prediction accuracy
-    """
-    if not use_onehot:
-      correct_count_ = tf.reduce_sum(tf.cast(tf.equal(max_prediction_flat_, targets_flat_), self.config.float_type)\
-                       * tf.reshape(self.mask_, [-1]))
-    else:
-      correct_count_ = tf.reduce_sum(tf.reduce_sum(max_prediction_flat_ * targets_flat_, 1) *
-                                     tf.reshape(self.mask_, [-1]))
-    tot_count_ = tf.cast(tf.reduce_sum(self.seq_len_), self.config.float_type)
-    max_prediction_acc_ = correct_count_ / tot_count_
-
-    """
-    # for debug
-    self.debug_tensors["sub_adj_mask"] = sub_adj_mask_
-    self.debug_tensors["log_probs"] = log_probs_
-    self.debug_tensors["probs"] = tf.exp(log_probs_)
-    self.debug_tensors["sub_onehot_targets_flat"] = sub_onehot_targets_flat
-    self.debug_tensors["max_prediction"] = max_prediction_
-    self.debug_tensors["seq_mask"] = tf.reshape(seq_mask_, [-1])
-    """
-    self.loss_dict["max_prediction_acc"] = max_prediction_acc_  # add to loss_dict for show
-
-  def build_input(self, train_phase, input_label, use_dest=False, dest_label_=None, use_emb_for_dest=True, var_scope="input"):
+  def build_input_layer(self, train_phase, input_label, use_dest=False, dest_label_=None, use_emb_for_dest=True, var_scope="input"):
     """
     Build input tensor of the model (transform to distributed representation)
     :param train_phase: bool
@@ -154,23 +127,263 @@ class TrajModel(object):
         inputs_ = emb_inputs_
       return inputs_
 
-  def build_trainer(self, object_loss_, params_to_train):
-    # compute grads and update params
-    # params = tf.trainable_variables()
+  def build_rnn_layer(self, inputs_, train_phase):
+    """
+    Build the computation graph from inputs to outputs of the RNN layer.
+    :param inputs_: [batch, t, emb], float
+    :param train_phase: bool
+    :return: rnn_outputs_: [batch, t, hid_dim], float
+    """
     config = self.config
-    if config.opt == 'sgd':
-      opt = tf.train.GradientDescentOptimizer(self.lr_)
-    elif config.opt == 'rmsprop':
-      opt = tf.train.RMSPropOptimizer(self.lr_, config.lr_decay)
-    elif config.opt == 'adam':
-      opt = tf.train.AdamOptimizer(self.lr_)
-    else:
-      raise Exception("config.opt should be correctly defined.")
-    grads = tf.gradients(object_loss_, params_to_train)
-    clipped_grads, norm = tf.clip_by_global_norm(grads, config.max_grad_norm)
-    self.update_op = opt.apply_gradients(zip(clipped_grads, params_to_train))
 
-  def build_sharedTask_layer(self, train_phase, var_scope="shared_task"):
+    def unrolled_rnn(cell, emb_inputs_, initial_state_, seq_len_):
+      if not config.fix_seq_len:
+        raise Exception("`config.fix_seq_len` should be set to `True` if using unrolled_rnn()")
+      outputs = []
+      state = initial_state_
+      with tf.variable_scope("unrolled_rnn"):
+        for t in range(config.max_seq_len):
+          if t > 0:
+            tf.get_variable_scope().reuse_variables()
+          output, state = cell(emb_inputs_[:, t], state)  # [batch, hid_dim]
+          outputs.append(output)
+        rnn_outputs_ = tf.pack(outputs, axis=1)  # [batch, t, hid_dim]
+      return rnn_outputs_
+    def dynamic_rnn(cell, emb_inputs_, initial_state_, seq_len_):
+      rnn_outputs_, last_states_ = tf.nn.dynamic_rnn(cell, emb_inputs_, initial_state=initial_state_,
+                                                     sequence_length=seq_len_,
+                                                     dtype=config.float_type)  # you should define dtype if initial_state is not provided
+      return rnn_outputs_
+    def bidirectional_rnn(cell, emb_inputs_, initial_state_, seq_len_):
+      rnn_outputs_, output_states = tf.nn.bidirectional_dynamic_rnn(cell, cell, emb_inputs_, seq_len_,
+                                                                    initial_state_, initial_state_, config.float_type)
+      return tf.concat(2, rnn_outputs_)
+    def rnn(cell, emb_inputs_, initial_state_, seq_len_):
+      if not config.fix_seq_len:
+        raise Exception("`config.fix_seq_len` should be set to `True` if using rnn()")
+      inputs_ = tf.unpack(emb_inputs_, axis=1)
+      outputs_, states_ = tf.nn.rnn(cell, inputs_, initial_state_, dtype=config.float_type, sequence_length=seq_len_)
+      return outputs_
+
+    if config.rnn == 'rnn':
+      cell = tf.nn.rnn_cell.BasicRNNCell(config.hidden_dim)
+    elif config.rnn == 'lstm':
+      cell = tf.nn.rnn_cell.BasicLSTMCell(config.hidden_dim)
+    elif config.rnn == 'gru':
+      cell = tf.nn.rnn_cell.GRUCell(config.hidden_dim)
+    else:
+      raise Exception("`config.rnn` should be correctly defined.")
+
+    if train_phase and config.keep_prob < 1:
+      cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=config.keep_prob)
+
+    if config.num_layers is not None and config.num_layers > 1:
+      cell = tf.nn.rnn_cell.MultiRNNCell([cell] * config.num_layers)
+
+    initial_state_ = cell.zero_state(config.batch_size, dtype=config.float_type)
+    if config.use_seq_len_in_rnn:
+      seq_len_ = self.seq_len_
+    else:
+      seq_len_ = None
+    rnn_outputs_ = dynamic_rnn(cell, inputs_, initial_state_, seq_len_)  # [batch, time, hid_dim]
+    return rnn_outputs_
+
+  def build_xent_loss_layer(self, outputs_flat_, use_constrained_softmax=False,
+                            constrained_softmax_strategy='adjmat_adjmask', build_unconstrained=False):
+    """
+    Build the computation process from the output of rnn layer to the x-ent loss layer.
+    :param outputs_flat_: [batch*t, hid_dim], float. The output of RNN layer of all time steps
+    :param use_constrained_softmax: bool. Set True to use CSSRNN or False to use traditional RNN (RNN-based LM)
+    :param constrained_softmax_strategy: string, 'adjmat_adjmask' = the method proposed in the paper.
+                                         'sparse_tensor' = an alternative, but slower than 'adjmat_adjmask'
+    :param build_unconstrained: bool, Set True to see the loss if we do not use the mask on the final layer when testing.
+    :return: This function will finally build some tensors you may care and add them to `self.loss_dict`
+    """
+    config = self.config
+    # projection to output space
+    wp_ = tf.get_variable("wp", [int(outputs_flat_.get_shape()[1]), config.state_size],
+                          dtype=config.float_type)  # [hid_dim, state_size]
+    bp_ = tf.get_variable("bp", [config.state_size], dtype=config.float_type)  # [state_size]
+
+    def build_loss_p_standard(outputs_flat_):
+      """
+      The traditional cross-ent loss.
+      :param outputs_flat_: [batch*t, hid_dim], float
+      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
+      """
+      targets_p_flat_ = tf.reshape(self.targets_, [-1])  # [batch*t]
+
+      # hidden to output
+      logits_p_ = tf.matmul(outputs_flat_, wp_) + bp_  # [batch*t, state_size]
+      loss_p_vec_ = tf.nn.sparse_softmax_cross_entropy_with_logits(logits_p_, targets_p_flat_)  # [batch*t]
+
+      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
+
+      max_prediction_label_ = tf.cast(tf.argmax(logits_p_, dimension=1), config.int_type) # [batch*t], int64->int32
+
+      self.build_max_predict_loss_layer(max_prediction_label_, targets_p_flat_, False)
+
+      return loss_p_
+
+    def build_loss_p_constrained_use_sparse_tensor(outputs_flat_):
+      """
+      Build the constrained cross-entropy loss for `outputs_flat_`.
+
+      The strategy is to use a sparse tensor `self.logits_mask__` to directly represent the logits mask.
+      Instead of using tf.nn.sparse_softmax_cross_entropy_with_logits(),
+      it generates an one-hot target tensor with shape [batch*t, state_size] and computes the cross-entropy
+      by sparse tensor ops.
+
+      :param outputs_flat_: [batch*t, hid_dim], flattened outputs of rnn
+      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
+      """
+      # hidden to output
+      logits_p_ = tf.matmul(outputs_flat_, wp_) + bp_  # [batch*t, state_size]
+      self.logits_mask__ = tf.sparse_placeholder(tf.float32, name="logits_mask")  # "__" to indicate a sparse tensor
+      logits_p_constrained__ = tf.sparse_softmax(self.logits_mask__ * logits_p_)  # [batch*t, state_size], sparse
+
+      # construct one-hot targets
+      targets_p_flat_ = tf.reshape(self.targets_, [-1])  # [batch*t]
+      onehot_targets_ = tf.one_hot(targets_p_flat_, config.state_size,
+                                   dtype=config.float_type)  # [batch*t, state_size]
+
+      xent__ = logits_p_constrained__ * onehot_targets_  # [batch*t, state_size], sparse
+      loss_p_vec_ = -tf.log(tf.sparse_reduce_sum(xent__, 1))  # [batch*t]
+      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
+
+      return loss_p_
+
+    def build_loss_p_constrained_use_adjmat_adjmask(outputs_flat_):
+      """
+      Build the constrained cross-entropy loss for `outputs_flat_`.
+
+      This strategy is the one introduced in the paper. Please refer the paper for more details.
+      :param outputs_flat_: [batch*t, hid_dim], flattened outputs of rnn
+      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
+      """
+
+      def constrained_softmax_cross_entropy_loss(outputs_, input_, target_, w_t_, b_, adj_mat_, adj_mask_):
+        """
+        constrained_softmax, fastest version!
+        :param outputs_: [batch*t, hid_dim], float
+        :param input_: [batch, t], int
+        :param target_: [batch, t], int
+        :param w_t_: [state_size, hid_dim], float
+        :param b_: [state_size], float
+        :param adj_mat_: [state_size, max_adj_num], int, the 'legal transition matrix' in the paper,
+                         adj_mat_[i][j] is the j-th adjacent state of i (include padding)
+        :param adj_mask_: [state_size, max_adj_num], float, the 'legal transition mask' in the paper,
+                          adj_mask_[i][j] represents whether adj_mat_[i][j] is an adjacent state ( = 1.0) of i or padding ( = 0.0)
+
+        :return: the loss with shape, [batch*t], float
+                 the prediction of next state w.r.t. each state by returning the one having maximum prob, [batch*t, max_adj_num], one-hot
+        """
+        input_flat_ = tf.reshape(input_, [-1])  # [batch*t]
+        target_flat_ = tf.reshape(target_, [-1, 1])  # [batch*t, 1]
+        sub_adj_mat_ = tf.nn.embedding_lookup(adj_mat_, input_flat_)  # [batch*t, max_adj_num]
+        sub_adj_mask_ = tf.nn.embedding_lookup(adj_mask_, input_flat_)  # [batch*t, max_adj_num]
+
+        # first column is target_
+        target_and_sub_adj_mat_ = tf.concat(1, [target_flat_, sub_adj_mat_])  # [batch*t, max_adj_num+1]
+
+        outputs_3d_ = tf.expand_dims(outputs_, 1)  # [batch*t, hid_dim] -> [batch*t, 1, hid_dim]
+
+        sub_w_ = tf.nn.embedding_lookup(w_t_, target_and_sub_adj_mat_)  # [batch*t, max_adj_num+1, hid_dim]
+        sub_b_ = tf.nn.embedding_lookup(b_,
+                                        target_and_sub_adj_mat_)  # [batch*t, max_adj_num+1] #TODO: I find that I forgot to add the bias :(
+        sub_w_flat_ = tf.reshape(sub_w_, [-1, int(sub_w_.get_shape()[2])])  # [batch*t*max_adj_num+1, hid_dim]
+        outputs_tiled_ = tf.tile(outputs_3d_, [1, tf.shape(adj_mat_)[1] + 1, 1])  # [batch*t, max+adj_num+1, hid_dim]
+        outputs_tiled_ = tf.reshape(outputs_tiled_,
+                                    [-1, int(outputs_tiled_.get_shape()[2])])  # [batch*t*max_adj_num+1, hid_dim]
+        target_logit_and_sub_logits_ = tf.reshape(tf.reduce_sum(tf.mul(sub_w_flat_, outputs_tiled_), 1),
+                                                  [-1, tf.shape(adj_mat_)[1] + 1])  # [batch*t, max_adj_num+1]
+
+        # for numerical stability
+        scales_ = tf.reduce_max(target_logit_and_sub_logits_, 1)  # [batch*t]
+        scaled_target_logit_and_sub_logits_ = tf.transpose(
+          tf.sub(tf.transpose(target_logit_and_sub_logits_),
+                 scales_))  # transpose for broadcasting [batch*t, max_adj_num+1]
+
+        scaled_sub_logits_ = scaled_target_logit_and_sub_logits_[:, 1:]  # [batch*t, max_adj_num]
+        exp_scaled_sub_logits_ = tf.exp(scaled_sub_logits_)  # [batch*t, max_adj_num]
+        deno_ = tf.reduce_sum(tf.mul(exp_scaled_sub_logits_, sub_adj_mask_), 1)  # [batch*t]
+        log_deno_ = tf.log(deno_)  # [batch*t]
+        log_nume_ = tf.reshape(scaled_target_logit_and_sub_logits_[:, 0:1], [-1])  # [batch*t]
+        loss_ = tf.sub(log_deno_, log_nume_)  # [batch*t] since loss is -sum(log(softmax))
+
+        max_prediction_ = tf.one_hot(tf.argmax(exp_scaled_sub_logits_ * sub_adj_mask_, 1),
+                                     int(adj_mat_.get_shape()[1]), dtype=config.float_type)  # [batch*t, max_adj_num]
+        return loss_, max_prediction_
+
+      wp_t_ = tf.transpose(wp_)  # [state_size, hid_dim]
+      loss_p_vec_, max_prediction_ = constrained_softmax_cross_entropy_loss(outputs_flat_, self.inputs_,
+                                                            self.targets_, wp_t_, bp_,
+                                                            self.adj_mat_, self.adj_mask_)  # [batch*t]
+      self.build_max_predict_loss_layer(max_prediction_,
+                                        tf.reshape(self.sub_onehot_targets_,
+                                             [-1, int(self.sub_onehot_targets_.get_shape()[2])]),
+                                        use_onehot=True)
+      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
+      return loss_p_
+
+    # loss p (i.e., the negative log likelihood loss / x-ent loss)
+    if use_constrained_softmax: # CSSRNN
+      if constrained_softmax_strategy == 'sparse_tensor':
+        loss_p_ = build_loss_p_constrained_use_sparse_tensor(outputs_flat_)
+      elif constrained_softmax_strategy == 'adjmat_adjmask': # this one is better
+        loss_p_ = build_loss_p_constrained_use_adjmat_adjmask(outputs_flat_)
+      else:
+        raise Exception('`config.constrained_softmax_strategy` should be correctly defined')
+      if build_unconstrained: # if you want to see the loss without the topological mask
+        loss_no_topo_mask = build_loss_p_standard(outputs_flat_)
+    else: # traditional RNN
+      loss_p_ = build_loss_p_standard(outputs_flat_)
+
+    loss_ = loss_p_
+
+    # construct loss_dict
+    # Note that here "loss" refers to the training loss (including L2-regularizer if it has, e.g., in LPIRNN model)
+    # and "loss_p" refers to the x-ent loss of the sequence. They are not the same
+    # (although they may refer to the same tensor like here)
+    self.loss_dict["loss"] = loss_
+    self.loss_dict["loss_p"] = loss_p_
+    if use_constrained_softmax and build_unconstrained:
+      self.loss_dict["loss_no_topo_mask"] = loss_no_topo_mask
+    return
+
+  def build_max_predict_loss_layer(self, max_prediction_flat_, targets_flat_, use_onehot):
+    """
+    Build the accuracy of predicting the next state by the one with maximum prob.
+    "_flat_" means the first dimension should be `batch*t` rather than `batch`
+    :param max_prediction_flat_: [batch*t, max_adj_num], one-hot, or [batch*t], int
+    :param targets_flat_: [batch*t, max_adj_num], one-hot, or [batch*t], int
+    :param use_onehot: bool, whether the representation is by one-hot or by label
+    :return: float, the prediction accuracy
+    """
+    if not use_onehot:
+      correct_count_ = tf.reduce_sum(tf.cast(tf.equal(max_prediction_flat_, targets_flat_), self.config.float_type) \
+                                     * tf.reshape(self.mask_, [-1]))
+    else:
+      correct_count_ = tf.reduce_sum(tf.reduce_sum(max_prediction_flat_ * targets_flat_, 1) *
+                                     tf.reshape(self.mask_, [-1]))
+    tot_count_ = tf.cast(tf.reduce_sum(self.seq_len_), self.config.float_type)
+    max_prediction_acc_ = correct_count_ / tot_count_
+
+    """
+    # for debug
+    self.debug_tensors["sub_adj_mask"] = sub_adj_mask_
+    self.debug_tensors["log_probs"] = log_probs_
+    self.debug_tensors["probs"] = tf.exp(log_probs_)
+    self.debug_tensors["sub_onehot_targets_flat"] = sub_onehot_targets_flat
+    self.debug_tensors["max_prediction"] = max_prediction_
+    self.debug_tensors["seq_mask"] = tf.reshape(seq_mask_, [-1])
+    """
+    self.loss_dict["max_prediction_acc"] = max_prediction_acc_  # add to loss_dict for show
+
+  def build_sharedTask_part(self, train_phase, var_scope="shared_task"):
     """
     Build input->RNN->FC_layer->latent prediction information.
     :param train_phase: bool
@@ -180,10 +393,10 @@ class TrajModel(object):
     config = self.config
     with tf.variable_scope(var_scope):
       # construct embeddings
-      emb_inputs_ = self.build_input(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
+      emb_inputs_ = self.build_input_layer(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
 
       # construct rnn
-      rnn_outputs_ = self.build_rnn(emb_inputs_, train_phase)  # [batch, time, hid_dim]
+      rnn_outputs_ = self.build_rnn_layer(emb_inputs_, train_phase)  # [batch, time, hid_dim]
       outputs_flat_ = tf.reshape(rnn_outputs_, [-1, int(rnn_outputs_.get_shape()[2])])  # [batch*t, hid_dim]
 
       # hidden to output
@@ -193,7 +406,7 @@ class TrajModel(object):
       lpi_ = tf.matmul(outputs_flat_, w_fc_) + b_fc_  # [batch*t, lpi_dim]
       return lpi_
 
-  def build_individualTask_layer(self, train_phase, lpi_, var_scope="individual_task"):
+  def build_individualTask_part(self, train_phase, lpi_, var_scope="individual_task"):
     """
     Build LPI->individual_task-> x-ent loss & max-prediction
     :param train_phase: bool
@@ -275,10 +488,10 @@ class TrajModel(object):
                                                                                               self.mask_,
                                                                                               all_w_task_, all_b_task_,
                                                                                               self.adj_mask_)
-      self.build_max_predict_loss(max_prediction_,
-                                  tf.reshape(self.sub_onehot_targets_,
+      self.build_max_predict_loss_layer(max_prediction_,
+                                        tf.reshape(self.sub_onehot_targets_,
                                              [-1, int(self.sub_onehot_targets_.get_shape()[2])]),
-                                  use_onehot=True)
+                                        use_onehot=True)
       loss_p_ = tf.reduce_sum(xent_) / config.batch_size
       if config.individual_task_regularizer > 0 and train_phase:
         if config.individual_task_keep_prob < 1.0:
@@ -291,8 +504,8 @@ class TrajModel(object):
 
   def build_LPIRNN_model(self, train_phase):
     config = self.config
-    self.lpi_ = self.build_sharedTask_layer(train_phase)
-    loss_, loss_p_ = self.build_individualTask_layer(train_phase, self.lpi_)
+    self.lpi_ = self.build_sharedTask_part(train_phase)
+    loss_, loss_p_ = self.build_individualTask_part(train_phase, self.lpi_)
     if config.trace_hid_layer:
       self.trace_dict["lpi_"+str(config.trace_input_id)] = self.lpi_ # here you can collect the lpi w.r.t. a given state id
     self.loss_dict["loss"] = loss_
@@ -317,26 +530,26 @@ class TrajModel(object):
     """
     config = self.config
     # construct embeddings
-    emb_inputs_ = self.build_input(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
+    emb_inputs_ = self.build_input_layer(train_phase, self.inputs_, config.input_dest, self.dests_label_, config.dest_emb)
 
     # construct rnn
-    rnn_outputs_ = self.build_rnn(emb_inputs_, train_phase)  # [batch, time, hid_dim]
+    rnn_outputs_ = self.build_rnn_layer(emb_inputs_, train_phase)  # [batch, time, hid_dim]
     outputs_flat_ = tf.reshape(rnn_outputs_, [-1, int(rnn_outputs_.get_shape()[2])])  # [batch*t, hid_dim]
 
     if config.model_type == "CSSRNN":
-      self.build_rnn_to_xent_loss(outputs_flat_, True, 'adjmat_adjmask', False) # the default settings of CSSRNN
+      self.build_xent_loss_layer(outputs_flat_, True, 'adjmat_adjmask', False) # the default settings of CSSRNN
     elif config.model_type == "RNN":
-      self.build_rnn_to_xent_loss(outputs_flat_, use_constrained_softmax=False)
+      self.build_xent_loss_layer(outputs_flat_, use_constrained_softmax=False)
     elif config.model_type == "SPECIFIED_CSSRNN":
       # construct specified losses
       if train_phase:
-        self.build_rnn_to_xent_loss(outputs_flat_, config.use_constrained_softmax_in_train,
-                                                   config.constrained_softmax_strategy,
-                                                   config.build_unconstrained_in_train)
+        self.build_xent_loss_layer(outputs_flat_, config.use_constrained_softmax_in_train,
+                                   config.constrained_softmax_strategy,
+                                   config.build_unconstrained_in_train)
       else:
-        self.build_rnn_to_xent_loss(outputs_flat_, config.use_constrained_softmax_in_test,
-                                                   config.constrained_softmax_strategy,
-                                                   config.build_unconstrained_in_test)
+        self.build_xent_loss_layer(outputs_flat_, config.use_constrained_softmax_in_test,
+                                   config.constrained_softmax_strategy,
+                                   config.build_unconstrained_in_test)
 
     # compute grads and update params
     self.build_trainer(self.loss_dict["loss"], tf.trainable_variables())
@@ -347,233 +560,21 @@ class TrajModel(object):
       self.saver = tf.train.Saver(tf.all_variables(), max_to_keep=config.max_ckpt_to_keep,
                                   write_version=saver_pb2.SaverDef.V1)
 
-  def build_rnn(self, inputs_, train_phase):
-    """
-    Build the computation graph from inputs to outputs of the RNN layer.
-    :param inputs_: [batch, t, emb], float
-    :param train_phase: bool
-    :return: rnn_outputs_: [batch, t, hid_dim], float
-    """
+  def build_trainer(self, object_loss_, params_to_train):
+    # compute grads and update params
+    # params = tf.trainable_variables()
     config = self.config
-
-    def unrolled_rnn(cell, emb_inputs_, initial_state_, seq_len_):
-      if not config.fix_seq_len:
-        raise Exception("`config.fix_seq_len` should be set to `True` if using unrolled_rnn()")
-      outputs = []
-      state = initial_state_
-      with tf.variable_scope("unrolled_rnn"):
-        for t in range(config.max_seq_len):
-          if t > 0:
-            tf.get_variable_scope().reuse_variables()
-          output, state = cell(emb_inputs_[:, t], state)  # [batch, hid_dim]
-          outputs.append(output)
-        rnn_outputs_ = tf.pack(outputs, axis=1)  # [batch, t, hid_dim]
-      return rnn_outputs_
-    def dynamic_rnn(cell, emb_inputs_, initial_state_, seq_len_):
-      rnn_outputs_, last_states_ = tf.nn.dynamic_rnn(cell, emb_inputs_, initial_state=initial_state_,
-                                                     sequence_length=seq_len_,
-                                                     dtype=config.float_type)  # you should define dtype if initial_state is not provided
-      return rnn_outputs_
-    def bidirectional_rnn(cell, emb_inputs_, initial_state_, seq_len_):
-      rnn_outputs_, output_states = tf.nn.bidirectional_dynamic_rnn(cell, cell, emb_inputs_, seq_len_,
-                                                                    initial_state_, initial_state_, config.float_type)
-      return tf.concat(2, rnn_outputs_)
-    def rnn(cell, emb_inputs_, initial_state_, seq_len_):
-      if not config.fix_seq_len:
-        raise Exception("`config.fix_seq_len` should be set to `True` if using rnn()")
-      inputs_ = tf.unpack(emb_inputs_, axis=1)
-      outputs_, states_ = tf.nn.rnn(cell, inputs_, initial_state_, dtype=config.float_type, sequence_length=seq_len_)
-      return outputs_
-
-    if config.rnn == 'rnn':
-      cell = tf.nn.rnn_cell.BasicRNNCell(config.hidden_dim)
-    elif config.rnn == 'lstm':
-      cell = tf.nn.rnn_cell.BasicLSTMCell(config.hidden_dim)
-    elif config.rnn == 'gru':
-      cell = tf.nn.rnn_cell.GRUCell(config.hidden_dim)
+    if config.opt == 'sgd':
+      opt = tf.train.GradientDescentOptimizer(self.lr_)
+    elif config.opt == 'rmsprop':
+      opt = tf.train.RMSPropOptimizer(self.lr_, config.lr_decay)
+    elif config.opt == 'adam':
+      opt = tf.train.AdamOptimizer(self.lr_)
     else:
-      raise Exception("`config.rnn` should be correctly defined.")
-
-    if train_phase and config.keep_prob < 1:
-      cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=config.keep_prob)
-
-    if config.num_layers is not None and config.num_layers > 1:
-      cell = tf.nn.rnn_cell.MultiRNNCell([cell] * config.num_layers)
-
-    initial_state_ = cell.zero_state(config.batch_size, dtype=config.float_type)
-    if config.use_seq_len_in_rnn:
-      seq_len_ = self.seq_len_
-    else:
-      seq_len_ = None
-    rnn_outputs_ = dynamic_rnn(cell, inputs_, initial_state_, seq_len_)  # [batch, time, hid_dim]
-    return rnn_outputs_
-
-  def build_rnn_to_xent_loss(self, outputs_flat_, use_constrained_softmax=False,
-                             constrained_softmax_strategy='adjmat_adjmask', build_unconstrained=False):
-    """
-    Build the computation process from the output of rnn layer to the x-ent loss layer.
-    :param outputs_flat_: [batch*t, hid_dim], float. The output of RNN layer of all time steps
-    :param use_constrained_softmax: bool. Set True to use CSSRNN or False to use traditional RNN (RNN-based LM)
-    :param constrained_softmax_strategy: string, 'adjmat_adjmask' = the method proposed in the paper.
-                                         'sparse_tensor' = an alternative, but slower than 'adjmat_adjmask'
-    :param build_unconstrained: bool, Set True to see the loss if we do not use the mask on the final layer when testing.
-    :return: This function will finally build some tensors you may care and add them to `self.loss_dict`
-    """
-    config = self.config
-    # projection to output space
-    wp_ = tf.get_variable("wp", [int(outputs_flat_.get_shape()[1]), config.state_size],
-                          dtype=config.float_type)  # [hid_dim, state_size]
-    bp_ = tf.get_variable("bp", [config.state_size], dtype=config.float_type)  # [state_size]
-
-    def build_loss_p_standard(outputs_flat_):
-      """
-      The traditional cross-ent loss.
-      :param outputs_flat_: [batch*t, hid_dim], float
-      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
-      """
-      targets_p_flat_ = tf.reshape(self.targets_, [-1])  # [batch*t]
-
-      # hidden to output
-      logits_p_ = tf.matmul(outputs_flat_, wp_) + bp_  # [batch*t, state_size]
-      loss_p_vec_ = tf.nn.sparse_softmax_cross_entropy_with_logits(logits_p_, targets_p_flat_)  # [batch*t]
-
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
-      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
-
-      max_prediction_label_ = tf.cast(tf.argmax(logits_p_, dimension=1), config.int_type) # [batch*t], int64->int32
-
-      self.build_max_predict_loss(max_prediction_label_, targets_p_flat_, False)
-
-      return loss_p_
-
-    def build_loss_p_constrained_use_sparse_tensor(outputs_flat_):
-      """
-      Build the constrained cross-entropy loss for `outputs_flat_`.
-
-      The strategy is to use a sparse tensor `self.logits_mask__` to directly represent the logits mask.
-      Instead of using tf.nn.sparse_softmax_cross_entropy_with_logits(),
-      it generates an one-hot target tensor with shape [batch*t, state_size] and computes the cross-entropy
-      by sparse tensor ops.
-
-      :param outputs_flat_: [batch*t, hid_dim], flattened outputs of rnn
-      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
-      """
-      # hidden to output
-      logits_p_ = tf.matmul(outputs_flat_, wp_) + bp_  # [batch*t, state_size]
-      self.logits_mask__ = tf.sparse_placeholder(tf.float32, name="logits_mask")  # "__" to indicate a sparse tensor
-      logits_p_constrained__ = tf.sparse_softmax(self.logits_mask__ * logits_p_)  # [batch*t, state_size], sparse
-
-      # construct one-hot targets
-      targets_p_flat_ = tf.reshape(self.targets_, [-1])  # [batch*t]
-      onehot_targets_ = tf.one_hot(targets_p_flat_, config.state_size,
-                                   dtype=config.float_type)  # [batch*t, state_size]
-
-      xent__ = logits_p_constrained__ * onehot_targets_  # [batch*t, state_size], sparse
-      loss_p_vec_ = -tf.log(tf.sparse_reduce_sum(xent__, 1))  # [batch*t]
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
-      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
-
-      return loss_p_
-
-    def build_loss_p_constrained_use_adjmat_adjmask(outputs_flat_):
-      """
-      Build the constrained cross-entropy loss for `outputs_flat_`.
-
-      This strategy is the one introduced in the paper. Please refer the paper for details.
-      :param outputs_flat_: [batch*t, hid_dim], flattened outputs of rnn
-      :return: loss_p_: 1-D tensor, the x-ent loss averaged by batch_size
-      """
-
-      def constrained_softmax_cross_entropy_loss(outputs_, input_, target_, w_t_, b_, adj_mat_, adj_mask_):
-        """
-        constrained_softmax, fastest version!
-        :param outputs_: [batch*t, hid_dim], float
-        :param input_: [batch, t], int
-        :param target_: [batch, t], int
-        :param w_t_: [state_size, hid_dim], float
-        :param b_: [state_size], float
-        :param adj_mat_: [state_size, max_adj_num], int, the 'legal transition matrix' in the paper,
-                         adj_mat_[i][j] is the j-th adjacent state of i (include padding)
-        :param adj_mask_: [state_size, max_adj_num], float, the 'legal transition mask' in the paper,
-                          adj_mask_[i][j] represents whether adj_mat_[i][j] is an adjacent state ( = 1.0) of i or padding ( = 0.0)
-
-        :return: the loss with shape, [batch*t], float
-                 the prediction of next state w.r.t. each state by returning the one having maximum prob, [batch*t, max_adj_num], one-hot
-        """
-        input_flat_ = tf.reshape(input_, [-1])  # [batch*t]
-        target_flat_ = tf.reshape(target_, [-1, 1])  # [batch*t, 1]
-        sub_adj_mat_ = tf.nn.embedding_lookup(adj_mat_, input_flat_)  # [batch*t, max_adj_num]
-        sub_adj_mask_ = tf.nn.embedding_lookup(adj_mask_, input_flat_)  # [batch*t, max_adj_num]
-
-        # first column is target_
-        target_and_sub_adj_mat_ = tf.concat(1, [target_flat_, sub_adj_mat_])  # [batch*t, max_adj_num+1]
-
-        outputs_3d_ = tf.expand_dims(outputs_, 1)  # [batch*t, hid_dim] -> [batch*t, 1, hid_dim]
-
-        sub_w_ = tf.nn.embedding_lookup(w_t_, target_and_sub_adj_mat_)  # [batch*t, max_adj_num+1, hid_dim]
-        sub_b_ = tf.nn.embedding_lookup(b_,
-                                        target_and_sub_adj_mat_)  # [batch*t, max_adj_num+1] #TODO: I find that I forgot to add the bias :(
-        sub_w_flat_ = tf.reshape(sub_w_, [-1, int(sub_w_.get_shape()[2])])  # [batch*t*max_adj_num+1, hid_dim]
-        outputs_tiled_ = tf.tile(outputs_3d_, [1, tf.shape(adj_mat_)[1] + 1, 1])  # [batch*t, max+adj_num+1, hid_dim]
-        outputs_tiled_ = tf.reshape(outputs_tiled_,
-                                    [-1, int(outputs_tiled_.get_shape()[2])])  # [batch*t*max_adj_num+1, hid_dim]
-        target_logit_and_sub_logits_ = tf.reshape(tf.reduce_sum(tf.mul(sub_w_flat_, outputs_tiled_), 1),
-                                                  [-1, tf.shape(adj_mat_)[1] + 1])  # [batch*t, max_adj_num+1]
-
-        # for numerical stability
-        scales_ = tf.reduce_max(target_logit_and_sub_logits_, 1)  # [batch*t]
-        scaled_target_logit_and_sub_logits_ = tf.transpose(
-          tf.sub(tf.transpose(target_logit_and_sub_logits_),
-                 scales_))  # transpose for broadcasting [batch*t, max_adj_num+1]
-
-        scaled_sub_logits_ = scaled_target_logit_and_sub_logits_[:, 1:]  # [batch*t, max_adj_num]
-        exp_scaled_sub_logits_ = tf.exp(scaled_sub_logits_)  # [batch*t, max_adj_num]
-        deno_ = tf.reduce_sum(tf.mul(exp_scaled_sub_logits_, sub_adj_mask_), 1)  # [batch*t]
-        log_deno_ = tf.log(deno_)  # [batch*t]
-        log_nume_ = tf.reshape(scaled_target_logit_and_sub_logits_[:, 0:1], [-1])  # [batch*t]
-        loss_ = tf.sub(log_deno_, log_nume_)  # [batch*t] since loss is -sum(log(softmax))
-
-        max_prediction_ = tf.one_hot(tf.argmax(exp_scaled_sub_logits_ * sub_adj_mask_, 1),
-                                     int(adj_mat_.get_shape()[1]), dtype=config.float_type)  # [batch*t, max_adj_num]
-        return loss_, max_prediction_
-
-      wp_t_ = tf.transpose(wp_)  # [state_size, hid_dim]
-      loss_p_vec_, max_prediction_ = constrained_softmax_cross_entropy_loss(outputs_flat_, self.inputs_,
-                                                            self.targets_, wp_t_, bp_,
-                                                            self.adj_mat_, self.adj_mask_)  # [batch*t]
-      self.build_max_predict_loss(max_prediction_,
-                                  tf.reshape(self.sub_onehot_targets_,
-                                             [-1, int(self.sub_onehot_targets_.get_shape()[2])]),
-                                  use_onehot=True)
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
-      loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
-      return loss_p_
-
-    # loss p
-    if use_constrained_softmax: # CSSRNN
-      if constrained_softmax_strategy == 'sparse_tensor':
-        loss_p_ = build_loss_p_constrained_use_sparse_tensor(outputs_flat_)
-      elif constrained_softmax_strategy == 'adjmat_adjmask':
-        loss_p_ = build_loss_p_constrained_use_adjmat_adjmask(outputs_flat_)
-      else:
-        raise Exception('`config.constrained_softmax_strategy` should be correctly defined')
-      if build_unconstrained:
-        loss_no_topo_mask = build_loss_p_standard(outputs_flat_)
-    else: # traditional RNN
-      loss_p_ = build_loss_p_standard(outputs_flat_)
-
-    # loss d & total loss
-    loss_ = loss_p_
-
-    # construct loss_dict
-    # Note that here "loss" refers to the training loss (including L2-regularizer if it has, e.g., in LPIRNN model)
-    # and "loss_p" refer to the x-ent loss of the sequence, they are not the same
-    # (although they may refer to the same tensor like here)
-    self.loss_dict["loss"] = loss_
-    self.loss_dict["loss_p"] = loss_p_
-    if use_constrained_softmax and build_unconstrained:
-      self.loss_dict["loss_no_topo_mask"] = loss_no_topo_mask
-    return
+      raise Exception("config.opt should be correctly defined.")
+    grads = tf.gradients(object_loss_, params_to_train)
+    clipped_grads, norm = tf.clip_by_global_norm(grads, config.max_grad_norm)
+    self.update_op = opt.apply_gradients(zip(clipped_grads, params_to_train))
 
   def get_batch(self, data, batch_size, max_len, append_EOS=False):
     """
