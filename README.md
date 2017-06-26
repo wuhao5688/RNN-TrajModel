@@ -41,7 +41,7 @@ Then you will be prompted to download a data named `map` which is actually an XM
 By executing `OSMGen.cs` (you may have to maually set the file path in the code) on the raw map file, the `nodeOSM.txt` and `edgeOSM.txt` will be automatically extracted. 
 The format of these two file are shown as follows.
 
-####nodeOSM.txt
+#### nodeOSM.txt
 Format: `[NodeID]`\t`[latitude]`\t`[longitude]`
 
 One node/vertex per line with increasing (continuous) ids.
@@ -58,7 +58,7 @@ E.g.,
 ```
 , which records 1,000 vertices in the road network.
 
-####edgeOSM.txt
+#### edgeOSM.txt
 Format: `[EdgeId]`\t`[StartNodeId]`\t`[EndNodeId]`\t`[k]`\t`[lat1]`\t`[lon1]`\t`[lat2]`\t`[lon2]`...\t`[latk]`\t`[lonk]`
 
 One edge (`StartNode` -> `EndNode`) per line with increasing (continuous) ids.
