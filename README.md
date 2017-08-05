@@ -38,7 +38,8 @@ codespace
 The map is recommended to be constructed from [OpenStreetMap](http://www.openstreetmap.org/export#).
 You can get your own road network file from OpenStreetMap by selecting the rectangle area and export the file by, say, `Overpass API` (the first choice in the web page).
 Then you will be prompted to download a data named `map` which is actually an XML-formatted file. 
-By executing `OSMGen.cs` (you may have to maually set the file path in the code) on the raw map file, the `nodeOSM.txt` and `edgeOSM.txt` will be automatically extracted. 
+To parse the raw map data, you can use the tool [here](https://github.com/wuhao5688/OSMExtractor).
+After successfully parsed the raw map data, the `nodeOSM.txt` and `edgeOSM.txt` will be automatically extracted. 
 The format of these two files are shown as follows.
 
 #### nodeOSM.txt
