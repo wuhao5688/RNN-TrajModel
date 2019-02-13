@@ -2,7 +2,7 @@
 
 The source code of my paper.
 
-[Hao Wu, Ziyang Chen, Weiwei Sun, Baihua Zheng, Wei Wang, Modeling Trajectories with Recurrent Neural Networks. IJCAI 2017](http://static.ijcai.org/proceedings-2017/0430.pdf)
+[Hao Wu, Ziyang Chen, Weiwei Sun, Baihua Zheng, Wei Wang, Modeling Trajectories with Recurrent Neural Networks. IJCAI 2017](https://www.ijcai.org/proceedings/2017/0430.pdf)
 
 ## Directory Structure
 The directory structure may be as follows
