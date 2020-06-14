@@ -104,7 +104,7 @@ class N_gram_model(object):
       trans.append(adjs)
     if given_dest:
       trans_d = [copy.deepcopy(trans) for _ in range(len(roadnet.edges))]
-
+        
     # do stats
     print("start stats")
     for route in data:

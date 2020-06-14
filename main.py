@@ -229,7 +229,7 @@ class Config(object):
     # Here I use `0` to be the `PAD_ID`, and the road 0 is also a valid road in the road network
     # which means it has an adjacent state (i.e., roadnet.edges[config.PAD_ID].adjList_ids[0]),
     # And since there is no historical trajectory that passes road 0, I decide to leverage it.
-    self.TARGET_PAD_ID = roadnet.edges[config.PAD_ID].adjList_ids[0]
+    self.TARGET_PAD_ID = roadnet.edges[self.PAD_ID].adjList_ids[0]
 
   def load(self, config_path):
     """
@@ -287,37 +287,37 @@ class Config(object):
     self.PAD_ID = int(self.PAD_ID)
 
     self.max_ckpt_to_keep = int(self.max_ckpt_to_keep)
-    if isinstance(self.load_ckpt, basestring):
+    if isinstance(self.load_ckpt, str):
       self.load_ckpt = bool(du.strtobool(self.load_ckpt))
-    if isinstance(self.save_ckpt, basestring):
+    if isinstance(self.save_ckpt, str):
       self.save_ckpt = bool(du.strtobool(self.save_ckpt))
-    if isinstance(self.compute_ppl, basestring):
+    if isinstance(self.compute_ppl, str):
       self.compute_ppl = bool(du.strtobool(self.compute_ppl))
-    if isinstance(self.direct_stdout_to_file, basestring):
+    if isinstance(self.direct_stdout_to_file, str):
       self.direct_stdout_to_file = bool(du.strtobool(self.direct_stdout_to_file))
     self.samples_per_epoch_in_train = int(self.samples_per_epoch_in_train)
-    if isinstance(self.use_v2_saver, basestring):
+    if isinstance(self.use_v2_saver, str):
       self.use_v2_saver = bool(du.strtobool(self.use_v2_saver))
 
     self.hidden_dim = int(self.hidden_dim)
     self.emb_dim = int(self.emb_dim)
     self.num_layers = int(self.num_layers)
-    if isinstance(self.use_bidir_rnn, basestring):
+    if isinstance(self.use_bidir_rnn, str):
       self.use_bidir_rnn = bool(du.strtobool(self.use_bidir_rnn))
-    if isinstance(self.eval_mode, basestring):
+    if isinstance(self.eval_mode, str):
       self.eval_mode = bool(du.strtobool(self.eval_mode))
 
-    if isinstance(self.use_constrained_softmax_in_train, basestring):
+    if isinstance(self.use_constrained_softmax_in_train, str):
       self.use_constrained_softmax_in_train = bool(du.strtobool(self.use_constrained_softmax_in_train))
-    if isinstance(self.build_unconstrained_in_train, basestring):
+    if isinstance(self.build_unconstrained_in_train, str):
       self.build_unconstrained_in_train = bool(du.strtobool(self.build_unconstrained_in_train))
-    if isinstance(self.use_constrained_softmax_in_test, basestring):
+    if isinstance(self.use_constrained_softmax_in_test, str):
       self.use_constrained_softmax_in_test = bool(du.strtobool(self.use_constrained_softmax_in_test))
-    if isinstance(self.build_unconstrained_in_test, basestring):
+    if isinstance(self.build_unconstrained_in_test, str):
       self.build_unconstrained_in_test = bool(du.strtobool(self.build_unconstrained_in_test))
-    if isinstance(self.input_dest, basestring):
+    if isinstance(self.input_dest, str):
       self.input_dest = bool(du.strtobool(self.input_dest))
-    if isinstance(self.dest_emb, basestring):
+    if isinstance(self.dest_emb, str):
       self.dest_emb = bool(du.strtobool(self.dest_emb))
 
     self.lpi_dim = int(self.lpi_dim)
@@ -330,21 +330,21 @@ class Config(object):
     self.keep_prob = float(self.keep_prob)
     self.max_grad_norm = float(self.max_grad_norm)
     self.init_scale = float(self.init_scale)
-    if isinstance(self.fix_seq_len, basestring):
+    if isinstance(self.fix_seq_len, str):
       self.fix_seq_len =bool(du.strtobool(self.fix_seq_len))
-    if isinstance(self.use_seq_len_in_rnn, basestring):
+    if isinstance(self.use_seq_len_in_rnn, str):
       self.use_seq_len_in_rnn = bool(du.strtobool(self.use_seq_len_in_rnn))
     self.max_seq_len = int(self.max_seq_len)
 
     self.epoch_count = int(self.epoch_count)
     self.samples_for_benchmark = int(self.samples_for_benchmark)
 
-    if isinstance(self.eval_ngram_model, basestring):
+    if isinstance(self.eval_ngram_model, str):
       self.eval_ngram_model = bool(du.strtobool(self.eval_ngram_model))
 
-    if isinstance(self.trace_hid_layer, basestring):
+    if isinstance(self.trace_hid_layer, str):
       self.trace_hid_layer = bool(du.strtobool(self.trace_hid_layer))
-    self.trace_input_id = int(self.trace_input_id)
+    #self.trace_input_id = int(self.trace_input_id)
 
 class MapInfo(object):
   def __init__(self, map, config):

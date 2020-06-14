@@ -1,5 +1,5 @@
 [dataset configuration]
-dataset_name = porto_6k
+dataset_name = sfo
 workspace = /data
 file_name = data/cleaned_mm_edges.txt
 data_size = -1
@@ -22,8 +22,8 @@ rnn = lstm
 use_bidir_rnn = False
 eval_mode = False
 # pretrained_input_emb_path = /data/porto_6k/ckpt/embeddings_400.csv
-input_dest = True
-dest_emb = True
+input_dest = False
+dest_emb = False
 
 [LPIRNN]
 lpi_dim = 50
@@ -32,7 +32,8 @@ individual_task_keep_prob = 0.9
 
 [params for training]
 batch_size = 128
-lr = 0.0001
+lr = 0.0003
+#lr = 0.0001
 lr_decay = 0.9
 keep_prob = 0.9
 max_grad_norm = 1.0
