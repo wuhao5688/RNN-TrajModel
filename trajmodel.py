@@ -58,7 +58,7 @@ class TrajModel(object):
     self.sub_onehot_targets_ = None
     self.trace_dict = {}
     self.trace_items = {} # k = target id, v = list of layer output
-    self.loss_logs = defaultdict(list)
+    self.loss_history = defaultdict(list)
 
     # construct tensors
     self.dest_coord_ = tf.constant(self.dest_coord, dtype=config.float_type, name="dest_coord") # [state_size, 2]
@@ -915,7 +915,7 @@ class TrajModel(object):
           cumulative_losses[k] = fetch_vals[k]
         else:
           cumulative_losses[k] += fetch_vals[k]
-      self.loss_logs[epoch].append(cumulative_losses)
+      self.loss_history[epoch].append(fetch_vals)
 
       # collect trace information (here we are collecting the latent prediction information w.r.t state `config.trace_input_id`)
       for k in self.trace_dict.keys():
