@@ -914,8 +914,7 @@ class TrajModel(object):
           cumulative_losses[k] = fetch_vals[k]
         else:
           cumulative_losses[k] += fetch_vals[k]
-      print(epoch, step_i)
-      self.loss_logs[(epoch, step_i)] = cumulative_losses[k]
+      self.loss_logs[(epoch, step_i)] = cumulative_losses
 
       # collect trace information (here we are collecting the latent prediction information w.r.t state `config.trace_input_id`)
       for k in self.trace_dict.keys():
