@@ -17,6 +17,7 @@ except ImportError: # python3
     import configparser
 import sys
 
+from collections import defaultdict
 
 class Batch(object):
   def __init__(self, inputs = None, targets = None, masks = None,
@@ -57,6 +58,7 @@ class TrajModel(object):
     self.sub_onehot_targets_ = None
     self.trace_dict = {}
     self.trace_items = {} # k = target id, v = list of layer output
+    self.loss_history = defaultdict(list)
 
     # construct tensors
     self.dest_coord_ = tf.constant(self.dest_coord, dtype=config.float_type, name="dest_coord") # [state_size, 2]
@@ -121,8 +123,8 @@ class TrajModel(object):
         else:
           self.dest_emb_ = self.dest_coord_
         dest_inputs_ = tf.tile(tf.expand_dims(tf.nn.embedding_lookup(self.dest_emb_, dest_label_), 1), [1, self.max_t_, 1])  # [batch, t, dest_emb]
-
-        inputs_ = tf.concat(2, [emb_inputs_, dest_inputs_], "input_with_dest")
+        inputs_ = tf.concat([emb_inputs_, dest_inputs_], 2, "input_with_dest")
+        #inputs_ = tf.concat(2, [emb_inputs_, dest_inputs_], "input_with_dest")
       else:
         inputs_ = emb_inputs_
       return inputs_
@@ -215,9 +217,9 @@ class TrajModel(object):
 
       # hidden to output
       logits_p_ = tf.matmul(outputs_flat_, wp_) + bp_  # [batch*t, state_size]
-      loss_p_vec_ = tf.nn.sparse_softmax_cross_entropy_with_logits(logits_p_, targets_p_flat_)  # [batch*t]
+      loss_p_vec_ = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits_p_, labels=targets_p_flat_)  # [batch*t]
 
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      masked_loss_p_ = tf.multiply(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
       loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
 
       max_prediction_label_ = tf.cast(tf.argmax(logits_p_, dimension=1), config.int_type) # [batch*t], int64->int32
@@ -250,7 +252,7 @@ class TrajModel(object):
 
       xent__ = logits_p_constrained__ * onehot_targets_  # [batch*t, state_size], sparse
       loss_p_vec_ = -tf.log(tf.sparse_reduce_sum(xent__, 1))  # [batch*t]
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      masked_loss_p_ = tf.multiply(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
       loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
 
       return loss_p_
@@ -286,7 +288,7 @@ class TrajModel(object):
         sub_adj_mask_ = tf.nn.embedding_lookup(adj_mask_, input_flat_)  # [batch*t, max_adj_num]
 
         # first column is target_
-        target_and_sub_adj_mat_ = tf.concat(1, [target_flat_, sub_adj_mat_])  # [batch*t, max_adj_num+1]
+        target_and_sub_adj_mat_ = tf.concat([target_flat_, sub_adj_mat_], 1)  # [batch*t, max_adj_num+1]
 
         outputs_3d_ = tf.expand_dims(outputs_, 1)  # [batch*t, hid_dim] -> [batch*t, 1, hid_dim]
 
@@ -297,21 +299,21 @@ class TrajModel(object):
         outputs_tiled_ = tf.tile(outputs_3d_, [1, tf.shape(adj_mat_)[1] + 1, 1])  # [batch*t, max+adj_num+1, hid_dim]
         outputs_tiled_ = tf.reshape(outputs_tiled_,
                                     [-1, int(outputs_tiled_.get_shape()[2])])  # [batch*t*max_adj_num+1, hid_dim]
-        target_logit_and_sub_logits_ = tf.reshape(tf.reduce_sum(tf.mul(sub_w_flat_, outputs_tiled_), 1),
+        target_logit_and_sub_logits_ = tf.reshape(tf.reduce_sum(tf.multiply(sub_w_flat_, outputs_tiled_), 1),
                                                   [-1, tf.shape(adj_mat_)[1] + 1])  # [batch*t, max_adj_num+1]
 
         # for numerical stability
         scales_ = tf.reduce_max(target_logit_and_sub_logits_, 1)  # [batch*t]
         scaled_target_logit_and_sub_logits_ = tf.transpose(
-          tf.sub(tf.transpose(target_logit_and_sub_logits_),
+          tf.subtract(tf.transpose(target_logit_and_sub_logits_),
                  scales_))  # transpose for broadcasting [batch*t, max_adj_num+1]
 
         scaled_sub_logits_ = scaled_target_logit_and_sub_logits_[:, 1:]  # [batch*t, max_adj_num]
         exp_scaled_sub_logits_ = tf.exp(scaled_sub_logits_)  # [batch*t, max_adj_num]
-        deno_ = tf.reduce_sum(tf.mul(exp_scaled_sub_logits_, sub_adj_mask_), 1)  # [batch*t]
+        deno_ = tf.reduce_sum(tf.multiply(exp_scaled_sub_logits_, sub_adj_mask_), 1)  # [batch*t]
         log_deno_ = tf.log(deno_)  # [batch*t]
         log_nume_ = tf.reshape(scaled_target_logit_and_sub_logits_[:, 0:1], [-1])  # [batch*t]
-        loss_ = tf.sub(log_deno_, log_nume_)  # [batch*t] since loss is -sum(log(softmax))
+        loss_ = tf.subtract(log_deno_, log_nume_)  # [batch*t] since loss is -sum(log(softmax))
 
         max_prediction_ = tf.one_hot(tf.argmax(exp_scaled_sub_logits_ * sub_adj_mask_, 1),
                                      int(adj_mat_.get_shape()[1]), dtype=config.float_type)  # [batch*t, max_adj_num]
@@ -325,7 +327,7 @@ class TrajModel(object):
                                         tf.reshape(self.sub_onehot_targets_,
                                              [-1, int(self.sub_onehot_targets_.get_shape()[2])]),
                                         use_onehot=True)
-      masked_loss_p_ = tf.mul(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
+      masked_loss_p_ = tf.multiply(loss_p_vec_, tf.reshape(self.mask_, [-1]))  # [batch*t]
       loss_p_ = tf.reduce_sum(masked_loss_p_) / config.batch_size
       return loss_p_
 
@@ -460,14 +462,14 @@ class TrajModel(object):
         sub_b_ = tf.nn.embedding_lookup(all_b_task_, inputs_flat_)  # [batch*t, max_adj_num]
 
         encoders_tiled_ = tf.tile(encoders_3d_, [1, int(adj_mask_.get_shape()[1]), 1])  # [batch*t, max_adj_num, dir]
-        logits_ = tf.reduce_sum(tf.mul(sub_w_, encoders_tiled_), 2) + sub_b_  # [batch*t, max_adj_num]
+        logits_ = tf.reduce_sum(tf.multiply(sub_w_, encoders_tiled_), 2) + sub_b_  # [batch*t, max_adj_num]
 
         # for numerical stability
         scales_ = tf.reduce_max(logits_, 1)  # [batch*t]
         scaled_logits = tf.transpose(
-          tf.sub(tf.transpose(logits_), scales_))  # transpose for broadcasting [batch*t, max_adj_num]
+          tf.subtract(tf.transpose(logits_), scales_))  # transpose for broadcasting [batch*t, max_adj_num]
         exp_scaled_logits_ = tf.exp(scaled_logits)  # [batch*t, max_adj_num]
-        normalizations_ = tf.reduce_sum(tf.mul(exp_scaled_logits_, sub_adj_mask_), 1)  # [batch*t]
+        normalizations_ = tf.reduce_sum(tf.multiply(exp_scaled_logits_, sub_adj_mask_), 1)  # [batch*t]
         log_probs_ = tf.transpose(tf.transpose(scaled_logits) - tf.log(normalizations_))  # [batch*t, max_adj_num]
 
         sub_onehot_targets_flat = tf.reshape(sub_onehot_targets_,
@@ -878,7 +880,7 @@ class TrajModel(object):
           print(loss_dict["_sub_onehot_targets_flat"][i])
           print(loss_dict["_max_prediction"][i])
           print(loss_dict["_seq_mask"][i])
-          raw_input()
+          # raw_input()
 
         for k in self.debug_tensors.keys():
           debug_val = loss_dict["_"+k]
@@ -893,14 +895,14 @@ class TrajModel(object):
     samples_per_sec, ms_per_sample, self.config.batch_size))
     print("benchmark loss = %.5f" % (loss / steps_for_test))
 
-  def train_epoch(self, sess, data):
+  def train_epoch(self, sess, data, epoch):
     config = self.config
     cumulative_losses = {}
     general_step_count = 0
     batch_counter = 0
 
     steps_per_epoch_in_train = self.config.samples_per_epoch_in_train // self.config.batch_size
-    for _ in range(steps_per_epoch_in_train):
+    for step_i in range(steps_per_epoch_in_train):
       batch_counter += 1
       general_step_count += 1
       batch = self.get_batch(data, self.config.batch_size, self.config.max_seq_len)
@@ -913,6 +915,7 @@ class TrajModel(object):
           cumulative_losses[k] = fetch_vals[k]
         else:
           cumulative_losses[k] += fetch_vals[k]
+      self.loss_history[epoch].append(fetch_vals)
 
       # collect trace information (here we are collecting the latent prediction information w.r.t state `config.trace_input_id`)
       for k in self.trace_dict.keys():
